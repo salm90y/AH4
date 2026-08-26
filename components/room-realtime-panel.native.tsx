@@ -1,6 +1,5 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 export type RealtimeRoomCredentials = {
   code: string;
@@ -8,40 +7,42 @@ export type RealtimeRoomCredentials = {
   token: string;
 };
 
-type NativePanel = (props: { credentials: RealtimeRoomCredentials }) => React.JSX.Element;
-
 export function RoomRealtimePanel({ credentials }: { credentials: RealtimeRoomCredentials }) {
-  const [Panel, setPanel] = useState<NativePanel | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    try {
-      const { initializeLiveKit } = require("@/lib/livekit-setup");
-      initializeLiveKit();
-      const implementation = require("./room-realtime-panel.native-impl") as { RoomRealtimePanel: NativePanel };
-      setPanel(() => implementation.RoomRealtimePanel);
-    } catch (caught) {
-      console.error("LiveKit initialization failed", caught);
-      setError(true);
-    }
-  }, []);
-
-  if (Panel) return <Panel credentials={credentials} />;
-
   return (
     <View style={styles.panel}>
-      <MaterialIcons color={error ? "#FF7484" : "#40C9FF"} name={error ? "error-outline" : "sync"} size={22} />
-      <View style={styles.copy}>
-        <Text style={styles.title}>{error ? "تعذر تحميل الاتصال الفوري" : "يجري تجهيز اتصال الغرفة"}</Text>
-        <Text style={styles.body}>{error ? "المشاهدة تظل متاحة. أعد فتح الغرفة لتجربة الصوت والكاميرا لاحقًا." : "تستمر واجهة الغرفة بالعمل أثناء تجهيز الدردشة والصوت."}</Text>
+      <View style={styles.head}>
+        <View style={styles.liveDot} />
+        <Text style={styles.title}>أدوات الغرفة</Text>
       </View>
+      <Text style={styles.body}>المشاهدة والدردشة النصية متاحتان في هذه النسخة الخفيفة. يُفعّل الاتصال والهوكي توكي والكاميرا في حزمة التواصل المتقدمة بعد التحقق من الاستقرار.</Text>
+      <View style={styles.actions}>
+        <Tool icon="chat-bubble-outline" label="الدردشة" onPress={() => Alert.alert("دردشة الغرفة", "ستظهر رسائل الغرفة هنا في التحديث التالي من النسخة الخفيفة.")} />
+        <Tool icon="mic-none" label="هوكي توكي" onPress={() => Alert.alert("هوكي توكي", "تم تعليق الصوت المباشر مؤقتًا لتقديم نسخة مستقرة وخفيفة.")} />
+        <Tool icon="videocam" label="كاميرا" onPress={() => Alert.alert("كاميرا الغرفة", "تم تعليق مشاركة الكاميرا مؤقتًا لتقديم نسخة مستقرة وخفيفة.")} />
+      </View>
+      <Text style={styles.code}>رمز الغرفة: {credentials.code}</Text>
     </View>
   );
 }
 
+function Tool({ icon, label, onPress }: { icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}>
+      <MaterialIcons color="#B9C4EB" name={icon} size={20} />
+      <Text style={styles.toolLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  body: { color: "#99A5C7", fontSize: 12, lineHeight: 18, textAlign: "right" },
-  copy: { flex: 1 },
-  panel: { alignItems: "flex-start", backgroundColor: "#0F172B", borderColor: "#263455", borderRadius: 20, borderWidth: 1, flexDirection: "row-reverse", gap: 11, marginHorizontal: 18, padding: 14 },
-  title: { color: "#F5F7FF", fontSize: 15, fontWeight: "900", marginBottom: 3, textAlign: "right" },
+  actions: { flexDirection: "row-reverse", gap: 9, marginTop: 14 },
+  body: { color: "#99A5C7", fontSize: 12, lineHeight: 19, textAlign: "right" },
+  code: { color: "#6D7AA5", fontSize: 11, marginTop: 13, textAlign: "right" },
+  head: { alignItems: "center", flexDirection: "row-reverse", gap: 8 },
+  liveDot: { backgroundColor: "#35D39E", borderRadius: 5, height: 8, width: 8 },
+  panel: { backgroundColor: "#0F172B", borderColor: "#263455", borderRadius: 20, borderWidth: 1, marginHorizontal: 18, padding: 15 },
+  title: { color: "#F5F7FF", fontSize: 15, fontWeight: "900", textAlign: "right" },
+  tool: { alignItems: "center", backgroundColor: "#182343", borderColor: "#2A3962", borderRadius: 14, borderWidth: 1, flex: 1, gap: 5, paddingVertical: 10 },
+  toolLabel: { color: "#DCE3FF", fontSize: 11, fontWeight: "800" },
+  toolPressed: { opacity: 0.72 },
 });
