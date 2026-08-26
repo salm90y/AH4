@@ -4,6 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { DataPacket_Kind, RoomEvent, Track } from "livekit-client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ensureLiveKitGlobals } from "@/lib/livekit-setup";
 
 export type RealtimeRoomCredentials = {
   code: string;
@@ -23,6 +24,7 @@ const palette = {
 };
 
 export function RoomRealtimePanel({ credentials }: { credentials: RealtimeRoomCredentials }) {
+  ensureLiveKitGlobals();
   if (!credentials.serverUrl || !credentials.token) {
     return (
       <View style={styles.unavailable}>
