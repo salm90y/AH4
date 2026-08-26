@@ -4,13 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "APK variant to build"
+        description: "APK type to build"
         required: true
-        default: debug
+        default: standalone
         type: choice
         options:
-          - debug
-          - release
+          - standalone
   push:
     branches:
       - main
@@ -37,13 +36,13 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build ${{ inputs.variant || 'debug' }} APK
+    name: Build ${{ inputs.variant || 'standalone' }} APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CI: "1"
       EXPO_NO_TELEMETRY: "1"
-      BUILD_VARIANT: ${{ inputs.variant || 'debug' }}
+      BUILD_VARIANT: ${{ inputs.variant || 'standalone' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -71,22 +70,20 @@ jobs:
       - name: Generate Android project
         run: npx expo prebuild --platform android --clean --no-install
 
-      - name: Select APK output
+      - name: Build standalone APK with embedded JavaScript
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify embedded JavaScript bundle
         id: apk
         run: |
-          if [ "$BUILD_VARIANT" = "release" ]; then
-            echo "gradle_task=:app:assembleRelease" >> "$GITHUB_OUTPUT"
-            echo "artifact_path=android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
-            echo "artifact_name=AH4-Watch-Party-release" >> "$GITHUB_OUTPUT"
-          else
-            echo "gradle_task=:app:assembleDebug" >> "$GITHUB_OUTPUT"
-            echo "artifact_path=android/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
-            echo "artifact_name=AH4-Watch-Party-debug" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build APK
-        working-directory: android
-        run: ./gradlew ${{ steps.apk.outputs.gradle_task }} --no-daemon --stacktrace
+          apk_path=$(find android/app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)
+          test -n "$apk_path"
+          unzip -l "$apk_path" | grep -q 'assets/index.android.bundle'
+          mkdir -p dist
+          cp "$apk_path" dist/AH4-Watch-Party-standalone.apk
+          echo "artifact_path=dist/AH4-Watch-Party-standalone.apk" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=AH4-Watch-Party-standalone" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
