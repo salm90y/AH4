@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import worker, { WatchRoom } from "../cloudflare/src/index.mjs";
+import { describe, expect, it, vi } from "vitest";
+
+class FakeDurableObject {
+  constructor(state: unknown, env: unknown) {
+    Object.assign(this, { state, env });
+  }
+}
+
+vi.mock(
+  "cloudflare:workers",
+  () => ({
+    DurableObject: FakeDurableObject,
+  }),
+);
+
+const { default: worker, WatchRoom } = await import("../cloudflare/src/index.mjs");
 
 class MemoryStorage {
   private values = new Map<string, unknown>();
@@ -14,13 +28,13 @@ class MemoryStorage {
 }
 
 function createEnvironment() {
-  const rooms = new Map<string, WatchRoom>();
+  const rooms = new Map<string, InstanceType<typeof WatchRoom>>();
   return {
     WATCH_ROOMS: {
       idFromName: (name: string) => name,
       get: (id: string) => {
         if (!rooms.has(id)) {
-          rooms.set(id, new WatchRoom({ storage: new MemoryStorage() }));
+          rooms.set(id, new WatchRoom({ storage: new MemoryStorage() }, {}));
         }
         const room = rooms.get(id)!;
         return {

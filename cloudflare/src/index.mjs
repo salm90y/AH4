@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 const encoder = new TextEncoder();
 
 function corsHeaders(headers = {}) {
@@ -87,8 +89,9 @@ function proxyWithCors(response) {
   return new Response(response.body, { status: response.status, headers });
 }
 
-export class WatchRoom {
-  constructor(state) {
+export class WatchRoom extends DurableObject {
+  constructor(state, env) {
+    super(state, env);
     this.state = state;
   }
 
