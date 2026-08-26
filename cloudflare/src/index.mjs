@@ -83,7 +83,17 @@ async function readJson(request) {
   }
 }
 
-function proxyWithCors(response) {
+async function proxyWithCors(response) {
+  if (response.status >= 500) {
+    const diagnostic = (await response.text()).slice(0, 500) || "EMPTY_DURABLE_OBJECT_RESPONSE";
+    return json(
+      {
+        error: "فشل مخزن الغرف في Cloudflare.",
+        diagnostic: `DURABLE_OBJECT_${response.status}: ${diagnostic}`,
+      },
+      502,
+    );
+  }
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeaders())) headers.set(key, value);
   return new Response(response.body, { status: response.status, headers });
