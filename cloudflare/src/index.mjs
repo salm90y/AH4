@@ -93,6 +93,20 @@ export class WatchRoom {
   }
 
   async fetch(request) {
+    try {
+      return await this.handleRequest(request);
+    } catch (error) {
+      return json(
+        {
+          error: "فشل خادم الغرفة أثناء معالجة الطلب.",
+          diagnostic: error instanceof Error ? error.message : "UNKNOWN_ROOM_ERROR",
+        },
+        500,
+      );
+    }
+  }
+
+  async handleRequest(request) {
     const url = new URL(request.url);
     const input = await readJson(request);
 
