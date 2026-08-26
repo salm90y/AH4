@@ -163,6 +163,21 @@ export class WatchRoom {
 
 export default {
   async fetch(request, env) {
+    try {
+      return await handleApiRequest(request, env);
+    } catch (error) {
+      return json(
+        {
+          error: "فشل خادم الغرف قبل معالجة الطلب.",
+          diagnostic: error instanceof Error ? error.message : "UNKNOWN_API_ERROR",
+        },
+        500,
+      );
+    }
+  },
+};
+
+async function handleApiRequest(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
 
     const url = new URL(request.url);
@@ -200,5 +215,4 @@ export default {
     }
 
     return json({ error: "المسار غير موجود." }, 404);
-  },
-};
+}
