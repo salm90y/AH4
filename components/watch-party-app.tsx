@@ -2,7 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { NativeMediaPlayer } from "@/components/native-media-player";
 import { RoomRealtimePanel, type RealtimeRoomCredentials } from "@/components/room-realtime-panel";
 import { ScreenContainer } from "@/components/screen-container";
-import { File } from "expo-file-system";
+import { File } from "expo-file-system/next";
 import { useKeepAwake } from "expo-keep-awake";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
