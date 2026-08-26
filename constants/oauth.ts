@@ -6,6 +6,7 @@ import * as ReactNative from "react-native";
 const bundleId = "com.app.ah4watchparty";
 const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
 const schemeFromBundleId = `manus${timestamp}`;
+const AH4_CLOUDFLARE_API_BASE_URL = "https://api.ahmed1986y.com";
 
 const env = {
   portal: process.env.EXPO_PUBLIC_OAUTH_PORTAL_URL ?? "",
@@ -35,7 +36,15 @@ export function getApiBaseUrl(): string {
     return API_BASE_URL.replace(/\/$/, "");
   }
 
-  // On web, derive from current hostname by replacing port 8081 with 3000
+  // AH4 uses Cloudflare for room creation in every app environment. This keeps
+  // the visual web preview on the same room API as Android when no build-time
+  // value has been provided.
+  if (AH4_CLOUDFLARE_API_BASE_URL) {
+    return AH4_CLOUDFLARE_API_BASE_URL;
+  }
+
+  // On web, derive from current hostname by replacing port 8081 with 3000.
+  // Kept as a future fallback if the public Cloudflare endpoint is disabled.
   if (ReactNative.Platform.OS === "web" && typeof window !== "undefined" && window.location) {
     const { protocol, hostname } = window.location;
     // Pattern: 8081-sandboxid.region.domain -> 3000-sandboxid.region.domain

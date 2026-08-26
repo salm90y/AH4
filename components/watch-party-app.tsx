@@ -155,7 +155,8 @@ function Field({
 }
 
 export function WatchPartyApp() {
-  const [screen, setScreen] = useState<Screen>("home");
+  const roomPreviewEnabled = Platform.OS === "web" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("room-preview") === "1";
+  const [screen, setScreen] = useState<Screen>(() => (roomPreviewEnabled ? "room" : "home"));
   const [createName, setCreateName] = useState("");
   const [createPassword, setCreatePassword] = useState("");
   const [joinName, setJoinName] = useState("");
@@ -164,8 +165,18 @@ export function WatchPartyApp() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [youtubeQuery, setYoutubeQuery] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [roomSearchInput, setRoomSearchInput] = useState("");
   const [searchHint, setSearchHint] = useState("");
-  const [room, setRoom] = useState<RoomState | null>(null);
+  const [room, setRoom] = useState<RoomState | null>(() => roomPreviewEnabled ? {
+    code: "AH4-RIOVJ8",
+    name: "مراجعة التصميم",
+    host: true,
+    passwordProtected: true,
+    sourceLabel: "لم يتم اختيار مصدر بعد",
+    sourceType: null,
+    sourceUrl: null,
+    credentials: { code: "AH4-RIOVJ8", serverUrl: "", token: "" },
+  } : null);
   const [channels, setChannels] = useState<M3uEntry[]>([]);
   const [channelQuery, setChannelQuery] = useState("");
   const [creatingRoom, setCreatingRoom] = useState(false);
@@ -326,6 +337,36 @@ export function WatchPartyApp() {
   const returnHome = () => {
     setScreen("home");
     setRoom(null);
+  };
+
+  const openRoomSource = (nextType: SourceType) => {
+    if (!room?.host) {
+      Alert.alert("تحكم المضيف", "المضيف فقط يستطيع تغيير المصدر لضمان تزامن المشاهدة للجميع.");
+      return;
+    }
+    setSourceType(nextType);
+    setSearchHint("");
+    setScreen("media");
+  };
+
+  const searchFromRoom = () => {
+    const query = roomSearchInput.trim();
+    if (!room?.host) {
+      Alert.alert("تحكم المضيف", "المضيف فقط يستطيع تغيير المصدر أو البحث عن محتوى جديد.");
+      return;
+    }
+    if (/^https?:\/\//i.test(query) && /\.m3u8?(?:$|[?#])/i.test(query)) {
+      setSourceType("hls");
+      setSourceUrl(query);
+    } else if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(query)) {
+      setSourceType("youtube");
+      setYoutubeUrl(query);
+    } else {
+      setSourceType("youtube");
+      setYoutubeQuery(query);
+    }
+    setSearchHint("");
+    setScreen("media");
   };
 
   const filteredChannels = useMemo(() => {
@@ -559,35 +600,49 @@ export function WatchPartyApp() {
     <ScreenContainer className="" edges={["top", "left", "right", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.roomScreen}>
         <View style={styles.roomHeader}>
-          <Pressable accessibilityRole="button" onPress={returnHome} style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}>
-            <MaterialIcons color={colors.text} name="close" size={21} />
+          <View style={styles.roomBrandMark}><Text style={styles.roomBrandText}>AH</Text></View>
+          <View style={styles.roomUserChip}><Text numberOfLines={1} style={styles.roomUserText}>{room?.host ? "المضيف" : "ضيف"}</Text></View>
+          <Pressable accessibilityLabel="عرض رمز واسم الغرفة" accessibilityRole="button" onPress={() => Alert.alert(room?.name ?? "الغرفة", room?.code ?? roomCode)} style={({ pressed }) => [styles.roomCodeChip, pressed && styles.pressed]}>
+            <Text numberOfLines={1} style={styles.roomCodeText}>{(room?.code ?? roomCode).replace("AH4-", "#")}</Text>
           </Pressable>
-          <View style={styles.roomHeaderCenter}>
-            <Text numberOfLines={1} style={styles.roomName}>{room?.name ?? "الغرفة"}</Text>
-            <View style={styles.syncRow}>
-              <View style={styles.syncDot} />
-              <Text style={styles.syncText}>متصل وجاهز للتزامن</Text>
-            </View>
-          </View>
-          <Pressable accessibilityRole="button" onPress={() => Alert.alert("رمز الغرفة", room?.code ?? roomCode)} style={({ pressed }) => [styles.roomCodeButton, pressed && styles.pressed]}>
-            <MaterialIcons color={colors.cyan} name="ios-share" size={19} />
+          <View style={styles.roomHeaderIconGold}><MaterialIcons color="#FFD24A" name="workspace-premium" size={20} /></View>
+          <View style={styles.roomHeaderIconShield}><MaterialIcons color="#9A8CFF" name="security" size={19} /></View>
+          <View style={styles.roomMemberChip}><Text style={styles.roomMemberText}>1</Text><MaterialIcons color="#57E7B2" name="group" size={20} /></View>
+          <Pressable accessibilityLabel="مغادرة الغرفة" accessibilityRole="button" onPress={returnHome} style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}>
+            <Text style={styles.leaveButtonText}>مغادرة</Text>
+            <MaterialIcons color="#FFFFFF" name="logout" size={20} />
+          </Pressable>
+        </View>
+
+        <View style={styles.roomSearchRow}>
+          <Pressable accessibilityLabel="بحث عن مصدر" accessibilityRole="button" onPress={searchFromRoom} style={({ pressed }) => [styles.roomSearchButton, pressed && styles.pressed]}>
+            <MaterialIcons color="#FFFFFF" name="search" size={27} />
+          </Pressable>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setRoomSearchInput}
+            onSubmitEditing={searchFromRoom}
+            placeholder="ابحث في يوتيوب أو ضع رابط مباشر (TS)"
+            placeholderTextColor="#9AA6C2"
+            returnKeyType="search"
+            style={styles.roomSearchInput}
+            textAlign="right"
+            value={roomSearchInput}
+          />
+          <Pressable accessibilityLabel="استيراد ملف M3U" accessibilityRole="button" onPress={() => openRoomSource("m3u")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
+            <MaterialIcons color="#FFFFFF" name="file-upload" size={25} />
+          </Pressable>
+          <Pressable accessibilityLabel="إضافة رابط M3U8" accessibilityRole="button" onPress={() => openRoomSource("hls")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchLink, pressed && styles.pressed]}>
+            <MaterialIcons color="#E9B3FF" name="language" size={25} />
+          </Pressable>
+          <Pressable accessibilityLabel="اختيار مصدر المشاهدة" accessibilityRole="button" onPress={() => openRoomSource("hls")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchPlaylist, pressed && styles.pressed]}>
+            <MaterialIcons color="#B6D7FF" name="playlist-play" size={26} />
           </Pressable>
         </View>
 
         <View style={styles.playerWrap}>
           <NativeMediaPlayer canControl={room?.host ?? false} sourceUrl={room?.sourceUrl ?? null} />
-        </View>
-
-        <View style={styles.roomActions}>
-          <Pressable onPress={() => room?.host ? setScreen("media") : Alert.alert("تحكم المضيف", "المضيف فقط يستطيع تغيير المصدر والتحكم في التشغيل لضمان تزامن الجميع.")} style={({ pressed }) => [styles.roomAction, pressed && styles.pressed]}>
-            <MaterialIcons color={colors.cyan} name={room?.host ? "queue-music" : "lock-outline"} size={20} />
-            <Text style={styles.roomActionText}>{room?.host ? "تغيير المصدر" : "يتحكم المضيف"}</Text>
-          </Pressable>
-          <View style={styles.divider} />
-          <View style={styles.roomAction}>
-            <MaterialIcons color={colors.success} name="group" size={20} />
-            <Text style={styles.roomActionText}>أعضاء الغرفة</Text>
-          </View>
         </View>
         {room ? <RoomRealtimePanel credentials={room.credentials} /> : null}
       </KeyboardAvoidingView>
@@ -661,7 +716,8 @@ const styles = StyleSheet.create({
   iconControlLabelActive: { color: colors.background },
   infoRow: { alignItems: "center", flexDirection: "row-reverse", gap: 8, justifyContent: "center", marginTop: 21, paddingHorizontal: 12 },
   infoText: { color: "#8F9DBC", flexShrink: 1, fontSize: 11, lineHeight: 17, textAlign: "right" },
-  leaveButton: { alignItems: "center", backgroundColor: colors.surface, borderRadius: 14, height: 40, justifyContent: "center", width: 40 },
+  leaveButton: { alignItems: "center", backgroundColor: "#4A1024", borderColor: "#A82A50", borderRadius: 11, borderWidth: 1, flexDirection: "row-reverse", gap: 4, height: 39, justifyContent: "center", paddingHorizontal: 8 },
+  leaveButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   liveDot: { backgroundColor: colors.success, borderRadius: 4, height: 8, width: 8 },
   livePill: { alignItems: "center", alignSelf: "flex-end", backgroundColor: "rgba(73,213,158,0.10)", borderColor: "rgba(73,213,158,0.22)", borderRadius: 999, borderWidth: 1, flexDirection: "row-reverse", gap: 7, paddingHorizontal: 11, paddingVertical: 7 },
   livePillText: { color: colors.success, fontSize: 11, fontWeight: "800" },
@@ -672,7 +728,7 @@ const styles = StyleSheet.create({
   noteText: { color: "#D7DDF4", flex: 1, fontSize: 13, lineHeight: 19, textAlign: "right" },
   noChannels: { color: colors.muted, fontSize: 13, paddingVertical: 18, textAlign: "center" },
   playOrb: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 30, height: 60, justifyContent: "center", width: 60 },
-  playerWrap: { paddingHorizontal: 18 },
+  playerWrap: { marginTop: 4, paddingHorizontal: 10 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.97 }] },
   presenceAvatar: { alignItems: "center", backgroundColor: "#C3A8FF", borderColor: "#E6DEFF", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", width: 25 },
   presenceAvatarSecond: { alignItems: "center", backgroundColor: "#273555", borderColor: "#596E9D", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", marginRight: -8, width: 25 },
@@ -687,12 +743,25 @@ const styles = StyleSheet.create({
   progressTrack: { backgroundColor: colors.border, borderRadius: 5, height: 5, justifyContent: "center", width: "100%" },
   roomAction: { alignItems: "center", flex: 1, flexDirection: "row-reverse", gap: 8, justifyContent: "center" },
   roomActionText: { color: colors.text, fontSize: 13, fontWeight: "700" },
-  roomActions: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", height: 51, justifyContent: "space-between", marginHorizontal: 18, paddingHorizontal: 6 },
-  roomCodeButton: { alignItems: "center", backgroundColor: colors.surface, borderRadius: 14, height: 40, justifyContent: "center", width: 40 },
-  roomHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 18, paddingVertical: 10 },
-  roomHeaderCenter: { alignItems: "center", flex: 1, paddingHorizontal: 12 },
-  roomName: { color: colors.text, fontSize: 16, fontWeight: "900", maxWidth: "100%" },
-  roomScreen: { flex: 1 },
+  roomBrandMark: { alignItems: "center", borderColor: "#874AFF", borderRadius: 12, borderWidth: 2, height: 42, justifyContent: "center", shadowColor: "#7E3AF2", shadowOpacity: 0.45, shadowRadius: 10, width: 42 },
+  roomBrandText: { color: "#AF9CFF", fontSize: 19, fontWeight: "900" },
+  roomCodeChip: { backgroundColor: "#080E1B", borderColor: "#273249", borderRadius: 10, borderWidth: 1, maxWidth: 66, paddingHorizontal: 6, paddingVertical: 9 },
+  roomCodeText: { color: "#F4F5FF", fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 10, fontWeight: "800", textAlign: "center" },
+  roomHeader: { alignItems: "center", backgroundColor: "#0A1121", borderBottomColor: "#26334B", borderBottomWidth: 1, flexDirection: "row-reverse", gap: 4, justifyContent: "space-between", minHeight: 68, paddingHorizontal: 9, paddingVertical: 10 },
+  roomHeaderIconGold: { alignItems: "center", backgroundColor: "#291237", borderColor: "#7B2AB6", borderRadius: 10, borderWidth: 1, height: 38, justifyContent: "center", width: 35 },
+  roomHeaderIconShield: { alignItems: "center", backgroundColor: "#18204E", borderColor: "#4653B2", borderRadius: 10, borderWidth: 1, height: 38, justifyContent: "center", width: 35 },
+  roomMemberChip: { alignItems: "center", backgroundColor: "#0B101F", borderColor: "#26334B", borderRadius: 10, borderWidth: 1, flexDirection: "row-reverse", gap: 3, height: 38, justifyContent: "center", width: 38 },
+  roomMemberText: { color: "#F0F3FF", fontSize: 14, fontWeight: "800" },
+  roomScreen: { backgroundColor: "#0B1222", flex: 1 },
+  roomSearchAction: { alignItems: "center", borderRadius: 16, height: 49, justifyContent: "center", width: 49 },
+  roomSearchButton: { alignItems: "center", backgroundColor: "#E70821", borderRadius: 16, height: 49, justifyContent: "center", shadowColor: "#FF0033", shadowOpacity: 0.42, shadowRadius: 12, width: 49 },
+  roomSearchInput: { backgroundColor: "#111827", borderColor: "#33425E", borderRadius: 18, borderWidth: 1, color: "#F5F7FF", flex: 1, fontSize: 13, height: 49, minWidth: 78, paddingHorizontal: 12 },
+  roomSearchLink: { backgroundColor: "#311268", borderColor: "#7730B2", borderWidth: 1 },
+  roomSearchPlaylist: { backgroundColor: "#112D66", borderColor: "#1F64C8", borderWidth: 1 },
+  roomSearchRow: { alignItems: "center", flexDirection: "row", gap: 7, paddingHorizontal: 10, paddingVertical: 12 },
+  roomSearchUpload: { backgroundColor: "#263044", borderColor: "#45536F", borderWidth: 1 },
+  roomUserChip: { backgroundColor: "#242B3A", borderColor: "#44506A", borderRadius: 10, borderWidth: 1, maxWidth: 56, paddingHorizontal: 7, paddingVertical: 10 },
+  roomUserText: { color: "#F5F7FF", fontSize: 11, fontWeight: "900", textAlign: "center" },
   screenHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 27 },
   screenTitle: { color: colors.text, fontSize: 17, fontWeight: "800" },
   searchHint: { color: colors.warning, fontSize: 13, lineHeight: 19, marginTop: 12, textAlign: "right" },

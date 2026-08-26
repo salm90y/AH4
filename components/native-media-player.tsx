@@ -111,10 +111,10 @@ export function NativeMediaPlayer({ sourceUrl, canControl }: { sourceUrl: string
     return (
       <View style={styles.emptyFrame}>
         <View style={styles.emptyOrb}>
-          <MaterialIcons color="#FFFFFF" name="play-arrow" size={38} />
+          <MaterialIcons color="#FFFFFF" name="play-arrow" size={34} />
         </View>
-        <Text style={styles.emptyTitle}>اختر مصدر المشاهدة</Text>
-        <Text style={styles.emptyText}>ألصق رابط M3U8 أو استورد ملف M3U لعرض القنوات داخل المشغّل الأصلي.</Text>
+        <Text style={styles.emptyTitle}>في انتظار اختيار أو تشغيل فيديو للمشاهدة…</Text>
+        <Text style={styles.emptyText}>ابحث في شريط البحث بالأعلى أو ألصق رابط يوتيوب / TS / M3U8 أو ارفع ملفًا مباشرًا</Text>
       </View>
     );
   }
@@ -190,24 +190,24 @@ function Control({
 }
 
 const styles = StyleSheet.create({
-  control: { alignItems: "center", flex: 1, gap: 4, justifyContent: "center", minHeight: 52 },
+  control: { alignItems: "center", flex: 1, gap: 4, justifyContent: "center", minHeight: 48 },
   controlDisabled: { opacity: 0.45 },
   controlLabel: { color: colors.muted, fontSize: 10, fontWeight: "800" },
-  controls: { flexDirection: "row-reverse", gap: 7, justifyContent: "space-between", paddingHorizontal: 3, paddingTop: 10 },
-  emptyFrame: { alignItems: "center", aspectRatio: 16 / 9, backgroundColor: "#080D1A", borderColor: "#202D4B", borderRadius: 19, borderWidth: 1, justifyContent: "center", paddingHorizontal: 30 },
-  emptyOrb: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 30, height: 60, justifyContent: "center", width: 60 },
-  emptyText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 8, textAlign: "center" },
-  emptyTitle: { color: colors.text, fontSize: 16, fontWeight: "900", marginTop: 10 },
+  controls: { flexDirection: "row-reverse", gap: 7, justifyContent: "space-between", paddingHorizontal: 3, paddingTop: 8 },
+  emptyFrame: { alignItems: "center", aspectRatio: 16 / 9, backgroundColor: "#050810", borderColor: "#1B2A42", borderRadius: 24, borderWidth: 1, justifyContent: "center", paddingHorizontal: 28 },
+  emptyOrb: { alignItems: "center", backgroundColor: "#A91529", borderColor: "#D02B3D", borderRadius: 19, height: 62, justifyContent: "center", transform: [{ rotate: "-4deg" }], width: 82 },
+  emptyText: { color: "#8995B2", fontSize: 12, lineHeight: 20, marginTop: 12, textAlign: "center" },
+  emptyTitle: { color: "#E9ECF8", fontSize: 19, fontWeight: "900", lineHeight: 28, marginTop: 24, textAlign: "center" },
   errorText: { color: "#FFB86B", fontSize: 12, lineHeight: 18, marginTop: 6, textAlign: "right" },
   loadingOverlay: { alignItems: "center", backgroundColor: "rgba(11,16,32,0.72)", bottom: 0, justifyContent: "center", left: 0, position: "absolute", right: 0, top: 0 },
   loadingText: { color: colors.text, fontSize: 13, fontWeight: "700" },
   pressed: { opacity: 0.8, transform: [{ scale: 0.97 }] },
-  primaryControl: { backgroundColor: colors.primary, borderRadius: 16 },
+  primaryControl: { backgroundColor: "#5134C4", borderRadius: 16 },
   primaryControlLabel: { color: "#FFFFFF" },
   progressFill: { backgroundColor: colors.cyan, borderRadius: 4, height: 5 },
   progressLabels: { flexDirection: "row-reverse", justifyContent: "space-between", marginBottom: 7, marginTop: 12 },
   progressText: { color: colors.muted, fontSize: 11 },
   progressTrack: { backgroundColor: colors.border, borderRadius: 5, height: 5, justifyContent: "center" },
   video: { height: "100%", width: "100%" },
-  videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#080D1A", borderColor: "#202D4B", borderRadius: 19, borderWidth: 1, overflow: "hidden" },
+  videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#050810", borderColor: "#1B2A42", borderRadius: 24, borderWidth: 1, overflow: "hidden" },
 });

@@ -1,6 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState, type ComponentType } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 type WatchPartyScreen = ComponentType;
 
@@ -19,8 +19,9 @@ export function SafeLaunchScreen() {
   const [WatchParty, setWatchParty] = useState<WatchPartyScreen | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const roomPreviewEnabled = Platform.OS === "web" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("room-preview") === "1";
 
-  const openExperience = () => {
+  const openExperience = useCallback(() => {
     setLoading(true);
     setLoadError(false);
 
@@ -34,7 +35,11 @@ export function SafeLaunchScreen() {
         setLoading(false);
       }
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (roomPreviewEnabled) openExperience();
+  }, [openExperience, roomPreviewEnabled]);
 
   if (WatchParty) return <WatchParty />;
 
