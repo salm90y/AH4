@@ -1,56 +1,42 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import worker from "../cloudflare/src/index.mjs";
 
-class FakeDurableObject {
-  constructor(state: unknown, env: unknown) {
-    Object.assign(this, { state, env });
-  }
-}
+type RoomRow = {
+  code: string;
+  name: string;
+  hostParticipantId: string;
+  passwordHash: string | null;
+  passwordSalt: string | null;
+};
 
-vi.mock(
-  "cloudflare:workers",
-  () => ({
-    DurableObject: FakeDurableObject,
-  }),
-);
+class FakeRoomsDatabase {
+  private rooms = new Map<string, RoomRow>();
 
-const { default: worker, WatchRoom } = await import("../cloudflare/src/index.mjs");
-
-class MemoryStorage {
-  private values = new Map<string, unknown>();
-
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.values.get(key) as T | undefined;
-  }
-
-  async put(key: string, value: unknown): Promise<void> {
-    this.values.set(key, value);
-  }
-}
-
-function createEnvironment() {
-  const rooms = new Map<string, InstanceType<typeof WatchRoom>>();
-  return {
-    WATCH_ROOMS: {
-      idFromName: (name: string) => name,
-      get: (id: string) => {
-        if (!rooms.has(id)) {
-          rooms.set(id, new WatchRoom({ storage: new MemoryStorage() }, {}));
-        }
-        const room = rooms.get(id)!;
-        return {
-          fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-            const request = input instanceof Request ? input : new Request(input, init);
-            return room.fetch(request);
-          },
-        };
+  prepare(query: string) {
+    const database = this;
+    let parameters: unknown[] = [];
+    return {
+      bind(...values: unknown[]) {
+        parameters = values;
+        return this;
       },
-    },
-  };
+      async run() {
+        if (!query.startsWith("INSERT")) throw new Error("Unsupported D1 statement");
+        const [code, name, hostParticipantId, passwordHash, passwordSalt] = parameters as [string, string, string, string | null, string | null];
+        if (database.rooms.has(code)) throw new Error("UNIQUE constraint failed");
+        database.rooms.set(code, { code, name, hostParticipantId, passwordHash, passwordSalt });
+        return { success: true };
+      },
+      async first() {
+        return database.rooms.get(parameters[0] as string) ?? null;
+      },
+    };
+  }
 }
 
 describe("Cloudflare room Worker", () => {
   it("creates a password-protected room and only joins it with the correct password", async () => {
-    const environment = createEnvironment();
+    const environment = { ROOMS_DB: new FakeRoomsDatabase() };
     const createResponse = await worker.fetch(
       new Request("https://api.ahmed1986y.com/v1/rooms", {
         method: "POST",
@@ -62,7 +48,7 @@ describe("Cloudflare room Worker", () => {
           displayName: "المضيف",
         }),
       }),
-      environment as never,
+      environment,
     );
 
     expect(createResponse.status).toBe(201);
@@ -82,7 +68,7 @@ describe("Cloudflare room Worker", () => {
           displayName: "ضيف",
         }),
       }),
-      environment as never,
+      environment,
     );
     expect(deniedResponse.status).toBe(403);
 
@@ -97,7 +83,7 @@ describe("Cloudflare room Worker", () => {
           displayName: "ضيف",
         }),
       }),
-      environment as never,
+      environment,
     );
     expect(joinedResponse.status).toBe(200);
     expect((await joinedResponse.json()) as { host: boolean }).toMatchObject({ host: false });

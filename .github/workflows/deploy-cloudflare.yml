@@ -32,6 +32,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Create or bind the D1 room database
+        run: |
+          set -euo pipefail
+          npx wrangler@4 d1 list --json > /tmp/ah4-d1-list.json
+          if ! node scripts/configure-cloudflare-d1.mjs /tmp/ah4-d1-list.json cloudflare/wrangler.jsonc; then
+            npx wrangler@4 d1 create ah4-watch-party-rooms --binding ROOMS_DB --config cloudflare/wrangler.jsonc
+            npx wrangler@4 d1 list --json > /tmp/ah4-d1-list.json
+            node scripts/configure-cloudflare-d1.mjs /tmp/ah4-d1-list.json cloudflare/wrangler.jsonc
+          fi
+
+      - name: Initialize room schema
+        run: npx wrangler@4 d1 execute ROOMS_DB --remote --file cloudflare/schema.sql --config cloudflare/wrangler.jsonc
+
       - name: Deploy Worker and custom domain
         run: npx wrangler@4 deploy --config cloudflare/wrangler.jsonc
 

@@ -10,18 +10,11 @@
       "custom_domain": true
     }
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "WATCH_ROOMS",
-        "class_name": "WatchRoom"
-      }
-    ]
-  },
-  "migrations": [
+  "d1_databases": [
     {
-      "tag": "v1",
-      "new_sqlite_classes": ["WatchRoom"]
+      "binding": "ROOMS_DB",
+      "database_name": "ah4-watch-party-rooms",
+      "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ]
 }
