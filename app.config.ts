@@ -67,7 +67,7 @@ const config: ExpoConfig = {
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
-    permissions: ["POST_NOTIFICATIONS", "CAMERA", "RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
+    permissions: ["POST_NOTIFICATIONS"],
     intentFilters: [
       {
         action: "VIEW",
@@ -90,20 +90,6 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     [
-      "expo-audio",
-      {
-        microphonePermission: "Allow $(PRODUCT_NAME) to use your microphone for calls and push-to-talk.",
-      },
-    ],
-    [
-      "expo-camera",
-      {
-        cameraPermission: "Allow $(PRODUCT_NAME) to share your camera in a watch room.",
-        microphonePermission: "Allow $(PRODUCT_NAME) to use your microphone for room video.",
-        recordAudioAndroid: true,
-      },
-    ],
-    [
       "expo-notifications",
       {
         icon: "./assets/images/favicon.png",
@@ -111,8 +97,6 @@ const config: ExpoConfig = {
         defaultChannel: "room-messages",
       },
     ],
-    "@livekit/react-native-expo-plugin",
-    "@config-plugins/react-native-webrtc",
     [
       "expo-video",
       {
@@ -136,7 +120,7 @@ const config: ExpoConfig = {
       "expo-build-properties",
       {
         android: {
-          buildArchs: ["armeabi-v7a", "arm64-v8a"],
+          buildArchs: ["arm64-v8a"],
           minSdkVersion: 24,
         },
       },
