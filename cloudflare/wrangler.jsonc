@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ah4-watch-party-api",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-08-26",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "api.ahmed1986y.com",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WATCH_ROOMS",
+        "class_name": "WatchRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WatchRoom"]
+    }
+  ]
+}

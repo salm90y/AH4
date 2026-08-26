@@ -8,8 +8,8 @@ import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { getGuestParticipantId } from "@/lib/guest-identity";
 import { parseM3uPlaylist, type M3uEntry } from "@/lib/m3u";
+import { createCloudRoom, joinCloudRoom } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
-import { trpc } from "@/lib/trpc";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -145,8 +145,8 @@ export function WatchPartyApp() {
   const [room, setRoom] = useState<RoomState | null>(null);
   const [channels, setChannels] = useState<M3uEntry[]>([]);
   const [channelQuery, setChannelQuery] = useState("");
-  const createRoomMutation = trpc.watchRooms.create.useMutation();
-  const joinRoomMutation = trpc.watchRooms.join.useMutation();
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
 
   useKeepAwake(screen === "room" ? "ah4-watch-party-room" : undefined);
 
@@ -175,8 +175,9 @@ export function WatchPartyApp() {
       return;
     }
     try {
+      setCreatingRoom(true);
       const participantId = await getGuestParticipantId();
-      const created = await createRoomMutation.mutateAsync({
+      const created = await createCloudRoom({
         name: safeName,
         password: password.trim(),
         participantId,
@@ -195,6 +196,8 @@ export function WatchPartyApp() {
       setScreen("room");
     } catch (error) {
       Alert.alert("تعذر إنشاء الغرفة", error instanceof Error ? error.message : "حاول مرة أخرى بعد التحقق من الاتصال.");
+    } finally {
+      setCreatingRoom(false);
     }
   };
 
@@ -205,8 +208,9 @@ export function WatchPartyApp() {
       return;
     }
     try {
+      setJoiningRoom(true);
       const participantId = await getGuestParticipantId();
-      const joined = await joinRoomMutation.mutateAsync({
+      const joined = await joinCloudRoom({
         code: normalizedCode,
         password: password.trim(),
         participantId,
@@ -225,6 +229,8 @@ export function WatchPartyApp() {
       setScreen("room");
     } catch (error) {
       Alert.alert("تعذر الانضمام", error instanceof Error ? error.message : "تحقق من الرمز وكلمة المرور ثم أعد المحاولة.");
+    } finally {
+      setJoiningRoom(false);
     }
   };
 
@@ -372,7 +378,7 @@ export function WatchPartyApp() {
             <Text style={styles.noteText}>يمكنك إضافة مصدر المشاهدة الآن أو من داخل الغرفة لاحقًا.</Text>
           </View>
           <View style={styles.grow} />
-          <PrimaryButton icon="arrow-back" label={createRoomMutation.isPending ? "جارٍ إنشاء الغرفة…" : "إنشاء وفتح الغرفة"} onPress={() => void createRoom(createName, createPassword)} />
+          <PrimaryButton icon="arrow-back" label={creatingRoom ? "جارٍ إنشاء الغرفة…" : "إنشاء وفتح الغرفة"} onPress={() => void createRoom(createName, createPassword)} />
         </KeyboardAvoidingView>
       </ScreenContainer>
     );
@@ -394,7 +400,7 @@ export function WatchPartyApp() {
             <Text style={styles.noteText}>سيعيد التطبيق ضبط المشغل تلقائيًا عند دخول الغرفة لتقليل فرق الوقت.</Text>
           </View>
           <View style={styles.grow} />
-          <PrimaryButton icon="group-add" label={joinRoomMutation.isPending ? "جارٍ الانضمام…" : "الانضمام الآن"} onPress={() => void joinRoom(joinName, joinPassword)} />
+          <PrimaryButton icon="group-add" label={joiningRoom ? "جارٍ الانضمام…" : "الانضمام الآن"} onPress={() => void joinRoom(joinName, joinPassword)} />
         </KeyboardAvoidingView>
       </ScreenContainer>
     );

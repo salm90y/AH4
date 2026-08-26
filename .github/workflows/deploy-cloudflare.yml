@@ -1,0 +1,46 @@
+name: Deploy Cloudflare Room API
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "cloudflare/**"
+      - ".github/workflows/deploy-cloudflare.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy api.ahmed1986y.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy Worker and custom domain
+        run: npx wrangler@4 deploy --config cloudflare/wrangler.jsonc
+
+      - name: Verify public room API
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --retry 1 https://api.ahmed1986y.com/health | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 8
+          done
+          exit 1
