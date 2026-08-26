@@ -1,5 +1,5 @@
-import { WatchPartyApp } from "@/components/watch-party-app";
+import { SafeLaunchScreen } from "@/components/safe-launch-screen";
 
 export default function HomeScreen() {
-  return <WatchPartyApp />;
+  return <SafeLaunchScreen />;
 }
