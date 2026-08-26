@@ -32,7 +32,7 @@ const env = {
   appSlug: "ah4-watch-party",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
   // Leave empty to use the default icon from assets/images/icon.png
-  logoUrl: "",
+  logoUrl: "/manus-storage/ah4-watch-party-icon_f3b59103.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
@@ -51,8 +51,11 @@ const config: ExpoConfig = {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
     "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+      "ITSAppUsesNonExemptEncryption": false,
+      "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to share your camera with members of a watch room.",
+      "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to use your microphone for calls and push-to-talk in a watch room.",
+      "UIBackgroundModes": ["audio"],
+    },
   },
   android: {
     adaptiveIcon: {
@@ -64,7 +67,7 @@ const config: ExpoConfig = {
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
-    permissions: ["POST_NOTIFICATIONS"],
+    permissions: ["POST_NOTIFICATIONS", "CAMERA", "RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
     intentFilters: [
       {
         action: "VIEW",
@@ -89,9 +92,27 @@ const config: ExpoConfig = {
     [
       "expo-audio",
       {
-        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
+        microphonePermission: "Allow $(PRODUCT_NAME) to use your microphone for calls and push-to-talk.",
       },
     ],
+    [
+      "expo-camera",
+      {
+        cameraPermission: "Allow $(PRODUCT_NAME) to share your camera in a watch room.",
+        microphonePermission: "Allow $(PRODUCT_NAME) to use your microphone for room video.",
+        recordAudioAndroid: true,
+      },
+    ],
+    [
+      "expo-notifications",
+      {
+        icon: "./assets/images/favicon.png",
+        color: "#7C5CFC",
+        defaultChannel: "room-messages",
+      },
+    ],
+    "@livekit/react-native-expo-plugin",
+    "@config-plugins/react-native-webrtc",
     [
       "expo-video",
       {

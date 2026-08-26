@@ -25,4 +25,15 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+export const watchRooms = mysqlTable("watch_rooms", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 32 }).notNull().unique(),
+  name: varchar("name", { length: 120 }).notNull(),
+  hostParticipantId: varchar("hostParticipantId", { length: 96 }).notNull(),
+  passwordSalt: varchar("passwordSalt", { length: 64 }),
+  passwordHash: varchar("passwordHash", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WatchRoom = typeof watchRooms.$inferSelect;
+export type InsertWatchRoom = typeof watchRooms.$inferInsert;
