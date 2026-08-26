@@ -4,6 +4,7 @@ import { RoomRealtimePanel, type RealtimeRoomCredentials } from "@/components/ro
 import { ScreenContainer } from "@/components/screen-container";
 import { File } from "expo-file-system/next";
 import { useKeepAwake } from "expo-keep-awake";
+import { LinearGradient } from "expo-linear-gradient";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { getGuestParticipantId } from "@/lib/guest-identity";
@@ -17,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -38,16 +40,17 @@ type RoomState = {
 };
 
 const colors = {
-  background: "#0B1020",
-  surface: "#141C33",
-  surfaceElevated: "#1B2746",
-  primary: "#7C5CFC",
-  cyan: "#40C9FF",
-  success: "#35D39E",
-  text: "#F5F7FF",
-  muted: "#99A5C7",
-  border: "#263455",
-  warning: "#FFB86B",
+  background: "#070B16",
+  surface: "#121B35",
+  surfaceElevated: "#19264A",
+  primary: "#8B5CF6",
+  cyan: "#32D7E7",
+  success: "#49D59E",
+  text: "#F7F8FF",
+  muted: "#A7B4D4",
+  border: "#2A3A60",
+  warning: "#FFB36B",
+  coral: "#FF7B78",
 };
 
 function IconButton({
@@ -91,9 +94,29 @@ function PrimaryButton({
       onPress={onPress}
       style={({ pressed }) => [styles.primaryButton, secondary && styles.secondaryButton, pressed && styles.pressed]}
     >
-      {icon ? <MaterialIcons color={secondary ? colors.text : "#FFFFFF"} name={icon} size={20} /> : null}
-      <Text style={[styles.primaryButtonText, secondary && styles.secondaryButtonText]}>{label}</Text>
+      {secondary ? (
+        <>
+          {icon ? <MaterialIcons color={colors.text} name={icon} size={20} /> : null}
+          <Text style={[styles.primaryButtonText, styles.secondaryButtonText]}>{label}</Text>
+        </>
+      ) : (
+        <LinearGradient colors={["#9D72FF", "#6E51DC", "#3D2A91"]} end={{ x: 1, y: 1 }} start={{ x: 0, y: 0 }} style={styles.primaryGradient}>
+          {icon ? <MaterialIcons color="#FFFFFF" name={icon} size={20} /> : null}
+          <Text style={styles.primaryButtonText}>{label}</Text>
+        </LinearGradient>
+      )}
     </Pressable>
+  );
+}
+
+function Feature({ icon, label }: { icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string }) {
+  return (
+    <View style={styles.featureItem}>
+      <View style={styles.featureIcon}>
+        <MaterialIcons color={colors.cyan} name={icon} size={16} />
+      </View>
+      <Text style={styles.featureLabel}>{label}</Text>
+    </View>
   );
 }
 
@@ -324,39 +347,73 @@ export function WatchPartyApp() {
   if (screen === "home") {
     return (
       <ScreenContainer className="" edges={["top", "left", "right", "bottom"]}>
-        <View style={styles.home}>
-          <View style={styles.brandRow}>
-            <View style={styles.brandMark}>
-              <MaterialIcons color="#FFFFFF" name="play-arrow" size={31} />
-            </View>
-            <View>
-              <Text style={styles.brandName}>AH4 Watch Party</Text>
-              <Text style={styles.brandCaption}>شاهِد معًا، في اللحظة نفسها</Text>
-            </View>
-          </View>
-
-          <View style={styles.heroCard}>
-            <View style={styles.livePill}>
-              <View style={styles.liveDot} />
-              <Text style={styles.livePillText}>غرف مشاهدة متزامنة</Text>
-            </View>
-            <Text style={styles.heroTitle}>جلسة مشاهدة خاصة{`\n`}بكل بساطة.</Text>
-            <Text style={styles.heroBody}>أنشئ غرفة بكلمة مرور، اختر مصدرًا مرخّصًا، وشاهدوا مع دردشة وتحكم واضح.</Text>
-            <View style={styles.heroVisual}>
-              <View style={styles.heroPlay}>
-                <MaterialIcons color="#FFFFFF" name="play-arrow" size={35} />
+        <View style={styles.homeShell}>
+          <LinearGradient colors={["#181443", "#090F23", "#070B16"]} end={{ x: 0.25, y: 1 }} start={{ x: 0.82, y: 0 }} style={StyleSheet.absoluteFill} />
+          <View style={styles.homeAuraOne} />
+          <View style={styles.homeAuraTwo} />
+          <ScrollView bounces={false} contentContainerStyle={styles.homeScroll} showsVerticalScrollIndicator={false}>
+            <View style={styles.topBrandLine}>
+              <View style={styles.brandRow}>
+                <LinearGradient colors={["#B08BFF", "#6948D4"]} style={styles.brandMark}>
+                  <MaterialIcons color="#FFFFFF" name="play-arrow" size={30} />
+                </LinearGradient>
+                <View>
+                  <Text style={styles.brandName}>AH4</Text>
+                  <Text style={styles.brandCaption}>WATCH TOGETHER</Text>
+                </View>
               </View>
-              <Text style={styles.heroVisualText}>جاهز لمصدر المشاهدة</Text>
+              <View style={styles.protectionMark}>
+                <MaterialIcons color={colors.cyan} name="lock-outline" size={18} />
+              </View>
             </View>
-          </View>
 
-          <PrimaryButton icon="add-circle-outline" label="إنشاء غرفة" onPress={() => setScreen("create")} />
-          <PrimaryButton icon="login" label="الانضمام إلى غرفة" onPress={() => setScreen("join")} secondary />
+            <View style={styles.homeHeading}>
+              <View style={styles.livePill}>
+                <View style={styles.liveDot} />
+                <Text style={styles.livePillText}>مساحة مشاهدة خاصة</Text>
+              </View>
+              <Text style={styles.heroTitle}>اجمع من تحب{`\n`}حول نفس اللحظة.</Text>
+              <Text style={styles.heroBody}>غرفة خاصة، مزامنة دقيقة، وتواصل حي — في تجربة واحدة مصممة للهاتف.</Text>
+            </View>
 
-          <View style={styles.infoRow}>
-            <MaterialIcons color={colors.cyan} name="verified-user" size={21} />
-            <Text style={styles.infoText}>تُخزّن كلمة مرور الغرفة بشكل آمن ولا تظهر للأعضاء.</Text>
-          </View>
+            <LinearGradient colors={["rgba(124,92,252,0.44)", "rgba(26,38,74,0.92)", "rgba(10,15,33,0.96)"]} end={{ x: 0.92, y: 1 }} start={{ x: 0.08, y: 0 }} style={styles.heroCard}>
+              <View style={styles.heroGridLine} />
+              <View style={styles.heroTopRow}>
+                <View style={styles.heroPresence}>
+                  <View style={styles.presenceAvatar}><Text style={styles.presenceAvatarText}>A</Text></View>
+                  <View style={styles.presenceAvatarSecond}><Text style={styles.presenceAvatarText}>+3</Text></View>
+                  <Text style={styles.heroPresenceText}>مكان للأصدقاء</Text>
+                </View>
+                <View style={styles.heroSyncChip}>
+                  <MaterialIcons color={colors.cyan} name="sync" size={16} />
+                  <Text style={styles.heroSyncText}>متزامن</Text>
+                </View>
+              </View>
+              <View style={styles.heroPlayArea}>
+                <LinearGradient colors={["#A477FF", "#6241D9"]} style={styles.heroPlay}>
+                  <MaterialIcons color="#FFFFFF" name="play-arrow" size={42} />
+                </LinearGradient>
+                <Text style={styles.heroVisualText}>ابدأ جلستك التالية</Text>
+                <Text style={styles.heroVisualSubtext}>M3U8 · M3U · روابط مشاركة</Text>
+              </View>
+            </LinearGradient>
+
+            <View style={styles.featureRail}>
+              <Feature icon="sync" label="مزامنة" />
+              <Feature icon="lock-outline" label="خاصة" />
+              <Feature icon="forum" label="تواصل" />
+            </View>
+
+            <View style={styles.actionStack}>
+              <PrimaryButton icon="add-circle-outline" label="أنشئ غرفة جديدة" onPress={() => setScreen("create")} />
+              <PrimaryButton icon="login" label="لدي رمز غرفة" onPress={() => setScreen("join")} secondary />
+            </View>
+
+            <View style={styles.infoRow}>
+              <MaterialIcons color={colors.cyan} name="verified-user" size={18} />
+              <Text style={styles.infoText}>كلمات مرور الغرف محمية ولا تظهر للأعضاء الآخرين.</Text>
+            </View>
+          </ScrollView>
         </View>
       </ScreenContainer>
     );
@@ -539,11 +596,12 @@ export function WatchPartyApp() {
 }
 
 const styles = StyleSheet.create({
+  actionStack: { gap: 11, marginTop: 24 },
   backButton: { alignItems: "center", backgroundColor: colors.surface, borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
-  brandCaption: { color: colors.muted, fontSize: 13, marginTop: 2, textAlign: "right" },
-  brandMark: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 18, height: 58, justifyContent: "center", width: 58 },
-  brandName: { color: colors.text, fontSize: 20, fontWeight: "800", textAlign: "right" },
-  brandRow: { alignItems: "center", flexDirection: "row-reverse", gap: 12, marginBottom: 26 },
+  brandCaption: { color: "#8795BD", fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginTop: 2, textAlign: "right" },
+  brandMark: { alignItems: "center", borderRadius: 18, height: 52, justifyContent: "center", overflow: "hidden", width: 52 },
+  brandName: { color: colors.text, fontSize: 22, fontWeight: "900", letterSpacing: 0.5, textAlign: "right" },
+  brandRow: { alignItems: "center", flexDirection: "row-reverse", gap: 11 },
   chatArea: { flex: 1, minHeight: 170, paddingHorizontal: 18, paddingTop: 12 },
   channelCopy: { flex: 1 },
   channelGroup: { color: colors.muted, fontSize: 11, marginTop: 3, textAlign: "right" },
@@ -567,6 +625,10 @@ const styles = StyleSheet.create({
   fieldBlock: { marginBottom: 18 },
   fieldInput: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 16, borderWidth: 1, color: colors.text, fontSize: 16, height: 53, paddingHorizontal: 16 },
   fieldLabel: { color: colors.text, fontSize: 14, fontWeight: "700", marginBottom: 8, textAlign: "right" },
+  featureIcon: { alignItems: "center", backgroundColor: "rgba(50,215,231,0.11)", borderRadius: 10, height: 28, justifyContent: "center", width: 28 },
+  featureItem: { alignItems: "center", flexDirection: "row-reverse", gap: 7 },
+  featureLabel: { color: "#B7C3E0", fontSize: 11, fontWeight: "800" },
+  featureRail: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-around", marginTop: 17, paddingHorizontal: 5 },
   fileDrop: { alignItems: "center", gap: 10, paddingVertical: 18 },
   fileDropTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
   formIntro: { marginBottom: 24, marginTop: 8 },
@@ -575,23 +637,34 @@ const styles = StyleSheet.create({
   formTitle: { color: colors.text, fontSize: 26, fontWeight: "900", textAlign: "right" },
   grow: { flex: 1 },
   headerSpacer: { width: 42 },
-  heroBody: { color: "#C5CFF0", fontSize: 15, lineHeight: 23, marginTop: 11, textAlign: "right" },
-  heroCard: { backgroundColor: colors.surfaceElevated, borderColor: "#33456F", borderRadius: 28, borderWidth: 1, marginBottom: 16, overflow: "hidden", padding: 22 },
-  heroPlay: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 26, height: 52, justifyContent: "center", width: 52 },
-  heroTitle: { color: colors.text, fontSize: 29, fontWeight: "900", lineHeight: 37, marginTop: 16, textAlign: "right" },
-  heroVisual: { alignItems: "center", backgroundColor: "#0E1630", borderColor: "#2B3B64", borderRadius: 18, borderWidth: 1, flexDirection: "row-reverse", gap: 12, marginTop: 20, padding: 14 },
-  heroVisualText: { color: colors.muted, flex: 1, fontSize: 13, textAlign: "right" },
-  home: { flex: 1, justifyContent: "center", paddingHorizontal: 22 },
+  heroBody: { color: "#B7C4E4", fontSize: 15, lineHeight: 24, marginTop: 13, textAlign: "right" },
+  heroCard: { borderColor: "rgba(171,150,255,0.38)", borderRadius: 30, borderWidth: 1, marginTop: 26, minHeight: 244, overflow: "hidden", padding: 18 },
+  heroGridLine: { backgroundColor: "rgba(128,105,255,0.15)", borderRadius: 80, height: 200, position: "absolute", right: -56, top: -84, transform: [{ rotate: "-18deg" }], width: 220 },
+  heroPlay: { alignItems: "center", borderRadius: 34, height: 68, justifyContent: "center", width: 68 },
+  heroPlayArea: { alignItems: "center", flex: 1, justifyContent: "center", paddingTop: 15 },
+  heroPresence: { alignItems: "center", flexDirection: "row-reverse", gap: 5 },
+  heroPresenceText: { color: "#B4C2E3", fontSize: 11, fontWeight: "700", marginRight: 5 },
+  heroSyncChip: { alignItems: "center", backgroundColor: "rgba(50,215,231,0.12)", borderColor: "rgba(50,215,231,0.26)", borderRadius: 99, borderWidth: 1, flexDirection: "row-reverse", gap: 5, paddingHorizontal: 9, paddingVertical: 6 },
+  heroSyncText: { color: colors.cyan, fontSize: 11, fontWeight: "800" },
+  heroTitle: { color: colors.text, fontSize: 33, fontWeight: "900", letterSpacing: -0.7, lineHeight: 42, marginTop: 13, textAlign: "right" },
+  heroTopRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  heroVisualSubtext: { color: "#8392BA", fontSize: 11, fontWeight: "700", letterSpacing: 0.25, marginTop: 6 },
+  heroVisualText: { color: colors.text, fontSize: 17, fontWeight: "900", marginTop: 13, textAlign: "center" },
+  homeAuraOne: { backgroundColor: "rgba(133,93,255,0.20)", borderRadius: 999, height: 290, position: "absolute", right: -150, top: 22, width: 290 },
+  homeAuraTwo: { backgroundColor: "rgba(50,215,231,0.10)", borderRadius: 999, bottom: 80, height: 230, left: -150, position: "absolute", width: 230 },
+  homeHeading: { marginTop: 46 },
+  homeScroll: { flexGrow: 1, paddingBottom: 34, paddingHorizontal: 22, paddingTop: 20 },
+  homeShell: { flex: 1, overflow: "hidden" },
   iconControl: { alignItems: "center", flex: 1, gap: 5, minWidth: 48, paddingVertical: 7 },
   iconControlActive: { backgroundColor: colors.primary, borderRadius: 16 },
   iconControlLabel: { color: colors.muted, fontSize: 10, fontWeight: "700" },
   iconControlLabelActive: { color: colors.background },
-  infoRow: { alignItems: "center", flexDirection: "row-reverse", gap: 9, justifyContent: "center", marginTop: 19, paddingHorizontal: 16 },
-  infoText: { color: colors.muted, flexShrink: 1, fontSize: 12, lineHeight: 18, textAlign: "right" },
+  infoRow: { alignItems: "center", flexDirection: "row-reverse", gap: 8, justifyContent: "center", marginTop: 21, paddingHorizontal: 12 },
+  infoText: { color: "#8F9DBC", flexShrink: 1, fontSize: 11, lineHeight: 17, textAlign: "right" },
   leaveButton: { alignItems: "center", backgroundColor: colors.surface, borderRadius: 14, height: 40, justifyContent: "center", width: 40 },
   liveDot: { backgroundColor: colors.success, borderRadius: 4, height: 8, width: 8 },
-  livePill: { alignItems: "center", alignSelf: "flex-end", backgroundColor: "#102B30", borderRadius: 999, flexDirection: "row-reverse", gap: 7, paddingHorizontal: 10, paddingVertical: 6 },
-  livePillText: { color: colors.success, fontSize: 12, fontWeight: "700" },
+  livePill: { alignItems: "center", alignSelf: "flex-end", backgroundColor: "rgba(73,213,158,0.10)", borderColor: "rgba(73,213,158,0.22)", borderRadius: 999, borderWidth: 1, flexDirection: "row-reverse", gap: 7, paddingHorizontal: 11, paddingVertical: 7 },
+  livePillText: { color: colors.success, fontSize: 11, fontWeight: "800" },
   messageAuthor: { color: colors.cyan, fontSize: 11, fontWeight: "800", textAlign: "right" },
   messageBody: { color: colors.text, fontSize: 14, lineHeight: 20, marginTop: 3, textAlign: "right" },
   messageBubble: { alignSelf: "flex-end", backgroundColor: colors.surface, borderRadius: 14, maxWidth: "82%", paddingHorizontal: 12, paddingVertical: 9 },
@@ -601,7 +674,11 @@ const styles = StyleSheet.create({
   playOrb: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 30, height: 60, justifyContent: "center", width: 60 },
   playerWrap: { paddingHorizontal: 18 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.97 }] },
-  primaryButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 17, flexDirection: "row-reverse", gap: 9, height: 56, justifyContent: "center", width: "100%" },
+  presenceAvatar: { alignItems: "center", backgroundColor: "#C3A8FF", borderColor: "#E6DEFF", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", width: 25 },
+  presenceAvatarSecond: { alignItems: "center", backgroundColor: "#273555", borderColor: "#596E9D", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", marginRight: -8, width: 25 },
+  presenceAvatarText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900" },
+  primaryButton: { alignItems: "center", borderRadius: 18, flexDirection: "row-reverse", height: 58, justifyContent: "center", overflow: "hidden", width: "100%" },
+  primaryGradient: { alignItems: "center", flex: 1, flexDirection: "row-reverse", gap: 9, justifyContent: "center", width: "100%" },
   primaryButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
   progressFill: { backgroundColor: colors.cyan, borderRadius: 4, height: 5 },
   progressLabels: { flexDirection: "row-reverse", justifyContent: "space-between", marginBottom: 7 },
@@ -619,7 +696,8 @@ const styles = StyleSheet.create({
   screenHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 27 },
   screenTitle: { color: colors.text, fontSize: 17, fontWeight: "800" },
   searchHint: { color: colors.warning, fontSize: 13, lineHeight: 19, marginTop: 12, textAlign: "right" },
-  secondaryButton: { backgroundColor: "transparent", borderColor: colors.border, borderWidth: 1, marginTop: 11 },
+  protectionMark: { alignItems: "center", backgroundColor: "rgba(50,215,231,0.10)", borderColor: "rgba(50,215,231,0.20)", borderRadius: 14, borderWidth: 1, height: 42, justifyContent: "center", width: 42 },
+  secondaryButton: { backgroundColor: "rgba(18,27,53,0.64)", borderColor: "#32456E", borderWidth: 1 },
   secondaryButtonText: { color: colors.text },
   sendButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 15, height: 46, justifyContent: "center", width: 46 },
   sourceBadge: { alignItems: "center", backgroundColor: "#242E4D", borderRadius: 999, flexDirection: "row-reverse", gap: 5, paddingHorizontal: 8, paddingVertical: 5 },
@@ -634,6 +712,7 @@ const styles = StyleSheet.create({
   syncDot: { backgroundColor: colors.success, borderRadius: 4, height: 7, width: 7 },
   syncRow: { alignItems: "center", flexDirection: "row-reverse", gap: 5, marginTop: 4 },
   syncText: { color: colors.success, fontSize: 11, fontWeight: "700" },
+  topBrandLine: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#080D1A", borderColor: "#202D4B", borderRadius: 19, borderWidth: 1, marginHorizontal: 18, overflow: "hidden", padding: 12 },
   videoPlaceholder: { alignItems: "center", flex: 1, justifyContent: "center", paddingHorizontal: 24 },
   videoPlaceholderText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 10, textAlign: "center" },

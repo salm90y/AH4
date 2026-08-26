@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 describe("Cloudflare deployment token", () => {
-  it("is active according to the official verification endpoint", async () => {
+  const verifyToken = process.env.RUN_CLOUDFLARE_TOKEN_TEST === "1" ? it : it.skip;
+
+  verifyToken("is active according to the official verification endpoint", async () => {
     const token = process.env.CLOUDFLARE_API_TOKEN;
     expect(token, "CLOUDFLARE_API_TOKEN must be configured").toBeTruthy();
 

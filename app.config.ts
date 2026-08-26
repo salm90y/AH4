@@ -67,7 +67,7 @@ const config: ExpoConfig = {
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
-    permissions: ["POST_NOTIFICATIONS"],
+    permissions: ["POST_NOTIFICATIONS", "CAMERA", "RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
     intentFilters: [
       {
         action: "VIEW",
@@ -104,6 +104,22 @@ const config: ExpoConfig = {
         supportsPictureInPicture: true,
       },
     ],
+    [
+      "expo-audio",
+      {
+        microphonePermission: "اسمح لتطبيق AH4 Watch Party باستخدام الميكروفون للاتصال والهوكي توكي داخل الغرفة.",
+      },
+    ],
+    [
+      "expo-camera",
+      {
+        cameraPermission: "اسمح لتطبيق AH4 Watch Party بمشاركة الكاميرا مع أعضاء الغرفة عند اختيارك ذلك.",
+        microphonePermission: "اسمح لتطبيق AH4 Watch Party باستخدام الميكروفون عند مشاركة الكاميرا.",
+        recordAudioAndroid: true,
+      },
+    ],
+    "@livekit/react-native-expo-plugin",
+    "@config-plugins/react-native-webrtc",
     [
       "expo-splash-screen",
       {

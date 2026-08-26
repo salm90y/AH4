@@ -44,6 +44,46 @@ function fromBase64(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function toBase64Url(value) {
+  const bytes = typeof value === "string" ? encoder.encode(value) : value;
+  return toBase64(bytes).replace(/=+$/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+async function createLiveKitToken({ room, participantId, displayName, host }, env) {
+  if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+    return { serverUrl: "", token: "" };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = toBase64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = toBase64Url(JSON.stringify({
+    exp: now + 60 * 60 * 2,
+    iat: now,
+    iss: env.LIVEKIT_API_KEY,
+    name: displayName,
+    nbf: now - 5,
+    sub: participantId,
+    video: {
+      canPublish: true,
+      canPublishData: true,
+      canSubscribe: true,
+      room,
+      roomAdmin: host,
+      roomJoin: true,
+    },
+  }));
+  const unsignedToken = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(env.LIVEKIT_API_SECRET),
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(unsignedToken));
+  return { serverUrl: env.LIVEKIT_URL, token: `${unsignedToken}.${toBase64Url(new Uint8Array(signature))}` };
+}
+
 async function derivePasswordHash(password, salt) {
   const material = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
@@ -69,14 +109,18 @@ async function readJson(request) {
   }
 }
 
-function roomResponse(room, participantId) {
+async function roomResponse(room, participantId, displayName, env) {
   return {
     code: room.code,
     name: room.name,
     passwordProtected: Boolean(room.passwordHash),
     host: room.hostParticipantId === participantId,
-    serverUrl: "",
-    token: "",
+    ...(await createLiveKitToken({
+      displayName,
+      host: room.hostParticipantId === participantId,
+      participantId,
+      room: room.code,
+    }, env)),
   };
 }
 
@@ -116,7 +160,7 @@ async function createRoom(input, env) {
       )
         .bind(room.code, room.name, room.hostParticipantId, room.passwordHash, room.passwordSalt)
         .run();
-      return json(roomResponse(room, input.participantId), 201);
+      return json(await roomResponse(room, input.participantId, input.displayName.trim(), env), 201);
     } catch (error) {
       if (!String(error).toLowerCase().includes("unique")) throw error;
     }
@@ -140,7 +184,7 @@ async function joinRoom(input, env) {
       return json({ error: "كلمة مرور الغرفة غير صحيحة." }, 403);
     }
   }
-  return json(roomResponse(room, input.participantId));
+  return json(await roomResponse(room, input.participantId, input.displayName.trim(), env));
 }
 
 export default {
@@ -159,3 +203,5 @@ export default {
     }
   },
 };
+
+export { createLiveKitToken };
