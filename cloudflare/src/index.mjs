@@ -154,14 +154,8 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/rooms") return await createRoom(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/join") return await joinRoom(await readJson(request), env);
       return json({ error: "المسار غير موجود." }, 404);
-    } catch (error) {
-      return json(
-        {
-          error: "تعذر الاتصال بخادم الغرف. حاول مرة أخرى.",
-          diagnostic: error instanceof Error ? error.message : "UNKNOWN_D1_ERROR",
-        },
-        500,
-      );
+    } catch {
+      return json({ error: "تعذر الاتصال بخادم الغرف. حاول مرة أخرى." }, 500);
     }
   },
 };
