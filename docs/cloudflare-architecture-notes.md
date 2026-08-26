@@ -21,4 +21,4 @@
 
 ## سبب التحول إلى D1
 
-أعاد Cloudflare خطأ وقت تشغيل `1101` عند إنشاء Durable Object في هذا الحساب؛ لذلك استُبدل بتخزين D1 المتاح بنفس رمز الصلاحيات. توثيق Cloudflare يوضح أن D1 يُنشأ عبر `wrangler d1 create` ويرتبط بالـ Worker من خلال binding؛ وتُنفَّذ الاستعلامات باستخدام `prepare().bind()` لتفادي حقن SQL. المصدر: [Wrangler D1 commands](https://developers.cloudflare.com/d1/wrangler-commands/) و[D1 getting started](https://developers.cloudflare.com/d1/get-started/).
+أعاد Cloudflare خطأ وقت تشغيل `1101` عند إنشاء Durable Object في هذا الحساب؛ لذلك استُبدل بتخزين D1 المتاح بنفس رمز الصلاحيات. توثيق Cloudflare يوضح أن D1 يُنشأ عبر `wrangler d1 create` ويرتبط بالـ Worker من خلال binding؛ وتُنفَّذ الاستعلامات باستخدام `prepare().bind()` لتفادي حقن SQL. تُجزّأ كلمات مرور الغرف بـ PBKDF2-SHA-256 عند الحد المدعوم في Workers، مع salt عشوائي مستقل. المصدر: [Wrangler D1 commands](https://developers.cloudflare.com/d1/wrangler-commands/) و[D1 getting started](https://developers.cloudflare.com/d1/get-started/).
