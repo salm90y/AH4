@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { Platform } from "react-native";
-import { registerGlobals } from "@livekit/react-native";
+import { initializeLiveKit } from "@/lib/livekit-setup";
 import "@/lib/_core/nativewind-pressable";
 import { ThemeProvider } from "@/lib/theme-provider";
 import {
@@ -27,9 +27,7 @@ export const unstable_settings = {
   anchor: "(tabs)",
 };
 
-if (Platform.OS !== "web") {
-  registerGlobals();
-}
+initializeLiveKit();
 
 export default function RootLayout() {
   const initialInsets = initialWindowMetrics?.insets ?? DEFAULT_WEB_INSETS;
