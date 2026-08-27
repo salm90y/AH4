@@ -1,4 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { Camera } from "expo-camera";
+import { requestRecordingPermissionsAsync } from "expo-audio";
 import { AndroidAudioTypePresets, AudioSession, isTrackReference, LiveKitRoom, useRoomContext, useTracks, VideoTrack } from "@livekit/react-native";
 import { DataPacket_Kind, RoomEvent, Track } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +10,7 @@ import { ensureLiveKitGlobals } from "@/lib/livekit-setup";
 
 export type RealtimeRoomCredentials = { code: string; serverUrl: string; token: string };
 type ChatMessage = RoomChatMessage & { mine: boolean };
-type ActivePane = "chat" | "camera" | "members" | null;
+type ActivePane = "chat" | "camera" | "members" | "settings" | null;
 
 const palette = { cyan: "#8E65FF", muted: "#98A4C0", panel: "#10182A", text: "#F8F8FF" };
 const permissionLabels: Record<RoomPermission, string> = { control_source: "تغيير المصدر", control_playback: "التحكم بالفيديو", search_youtube: "بحث YouTube", moderate_chat: "إدارة الدردشة", manage_members: "إدارة الأعضاء" };
@@ -27,12 +29,12 @@ export function RoomRealtimePanel({ accessToken, callVolume, credentials, onSelf
   const [audioConfigured, setAudioConfigured] = useState(false);
   useEffect(() => {
     let active = true;
-    void AudioSession.configureAudio({ android: { preferredOutputList: ["bluetooth", "headset", "speaker", "earpiece"], audioTypeOptions: { ...AndroidAudioTypePresets.communication, manageAudioFocus: false, audioFocusMode: "gainTransientMayDuck" } } }).catch(() => undefined).finally(() => active && setAudioConfigured(true));
+    void AudioSession.configureAudio({ android: { preferredOutputList: ["bluetooth", "headset", "speaker", "earpiece"], audioTypeOptions: { ...AndroidAudioTypePresets.communication, forceHandleAudioRouting: true, manageAudioFocus: false, audioFocusMode: "gainTransientMayDuck" } } }).catch(() => undefined).finally(() => active && setAudioConfigured(true));
     return () => { active = false; };
   }, []);
   if (!credentials.serverUrl || !credentials.token) return <View style={styles.unavailable}><MaterialIcons color={palette.cyan} name="cloud-sync" size={20} /><Text style={styles.unavailableText}>يتم تجهيز قناة التواصل الآمن للغرفة.</Text></View>;
   if (!audioConfigured) return <View style={styles.compactLoading}><MaterialIcons color={palette.cyan} name="sync" size={18} /></View>;
-  return <LiveKitRoom audio={false} connect serverUrl={credentials.serverUrl} token={credentials.token} video={false}><RealtimeControls accessToken={accessToken} callVolume={callVolume} code={credentials.code} onCallVolumeChange={onCallVolumeChange} onSelfAccessChange={onSelfAccessChange} participantId={participantId} permissions={permissions} role={role} /></LiveKitRoom>;
+  return <LiveKitRoom audio={false} connect onError={() => Alert.alert("تعذر الاتصال", "تعذر فتح قناة الاتصال. تحقق من الإنترنت ثم أعد دخول الغرفة.")} serverUrl={credentials.serverUrl} token={credentials.token} video={false}><RealtimeControls accessToken={accessToken} callVolume={callVolume} code={credentials.code} onCallVolumeChange={onCallVolumeChange} onSelfAccessChange={onSelfAccessChange} participantId={participantId} permissions={permissions} role={role} /></LiveKitRoom>;
 }
 
 function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, onSelfAccessChange, participantId, permissions, role }: {
@@ -54,12 +56,16 @@ function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, o
   const [callOn, setCallOn] = useState(false);
   const [talking, setTalking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [speakerOutput, setSpeakerOutput] = useState(true);
+  const [voiceLevel, setVoiceLevel] = useState(0);
   const [selfModeration, setSelfModeration] = useState<Pick<RoomMember, "muted" | "cameraBlocked">>({ muted: false, cameraBlocked: false });
   const [selectedMember, setSelectedMember] = useState<RoomMember | null>(null);
   const pendingPress = useRef(false);
   const cameraTracks = useTracks([Track.Source.Camera]);
   const canModerate = permissions.includes("moderate_chat");
   const canManageMembers = role === "host" || permissions.includes("manage_members");
+  const audioCaptureOptions = useMemo(() => ({ autoGainControl: true, echoCancellation: true, noiseSuppression }), [noiseSuppression]);
 
   const hydrateRoom = useCallback(async () => {
     if (!accessToken) return;
@@ -79,6 +85,11 @@ function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, o
   useEffect(() => {
     room.remoteParticipants.forEach((participant) => participant.setVolume(Math.max(0, Math.min(1, callVolume))));
   }, [callVolume, room, room.remoteParticipants.size]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setVoiceLevel(Math.max(0, Math.min(1, room.localParticipant.audioLevel || 0))), 120);
+    return () => clearInterval(interval);
+  }, [room]);
 
   useEffect(() => {
     const onData = (payload: Uint8Array, participant?: { name?: string; identity?: string }, kind?: DataPacket_Kind) => {
@@ -102,18 +113,37 @@ function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, o
   }, [room, selfModeration.cameraBlocked, selfModeration.muted]);
 
   const memberCount = useMemo(() => Math.max(room.remoteParticipants.size + 1, members.length || 1), [members.length, room.remoteParticipants.size]);
+  const requestMicrophone = async () => {
+    const permission = await requestRecordingPermissionsAsync();
+    if (!permission.granted) throw new Error("microphone-permission-denied");
+  };
+  const requestCamera = async () => {
+    const [cameraPermission, microphonePermission] = await Promise.all([Camera.requestCameraPermissionsAsync(), requestRecordingPermissionsAsync()]);
+    if (!cameraPermission.granted || !microphonePermission.granted) throw new Error("camera-permission-denied");
+  };
+  const setNoiseControl = async () => {
+    const next = !noiseSuppression;
+    setNoiseSuppression(next);
+    if (!callOn && !talking) return;
+    try { await room.localParticipant.setMicrophoneEnabled(false); await room.localParticipant.setMicrophoneEnabled(true, { autoGainControl: true, echoCancellation: true, noiseSuppression: next }); }
+    catch { Alert.alert("إعداد الصوت", "تعذر تطبيق إعداد إزالة الضجيج الآن."); }
+  };
+  const switchOutput = async () => {
+    try { await AudioSession.startAudioSession(); const next = speakerOutput ? "earpiece" : "speaker"; await AudioSession.selectAudioOutput(next); setSpeakerOutput(!speakerOutput); }
+    catch { Alert.alert("مخرج الصوت", "تعذر تغيير مخرج الصوت على هذا الجهاز."); }
+  };
   const openCall = async () => {
     if (busy || selfModeration.muted) { if (selfModeration.muted) Alert.alert("تم إسكاتك", "لا يمكنك بدء الاتصال حتى يزيل المضيف أو المشرف الإسكات."); return; }
-    try { setBusy(true); const next = !callOn; if (next) await AudioSession.startAudioSession(); await room.localParticipant.setMicrophoneEnabled(next); setCallOn(next); if (next) setTalking(false); if (!next) await AudioSession.stopAudioSession(); } catch { Alert.alert("تعذر تشغيل الاتصال", "تحقق من إذن الميكروفون واتصالك بالإنترنت ثم حاول مرة أخرى."); } finally { setBusy(false); }
+    try { setBusy(true); const next = !callOn; if (next) { await requestMicrophone(); await AudioSession.startAudioSession(); await AudioSession.setDefaultRemoteAudioTrackVolume(callVolume); } await room.localParticipant.setMicrophoneEnabled(next, audioCaptureOptions); setCallOn(next); if (next) setTalking(false); if (!next) await AudioSession.stopAudioSession(); } catch { Alert.alert("تعذر تشغيل الاتصال", "اسمح للميكروفون ثم تحقق من الإنترنت وأعد المحاولة."); } finally { setBusy(false); }
   };
   const toggleCamera = async () => {
     if (busy || selfModeration.cameraBlocked) { if (selfModeration.cameraBlocked) Alert.alert("الكاميرا محظورة", "لا يمكنك تشغيل الكاميرا حتى يزيل المضيف أو المشرف الحظر."); return; }
-    try { setBusy(true); const next = !cameraOn; await room.localParticipant.setCameraEnabled(next); setCameraOn(next); setActivePane(next ? "camera" : "chat"); } catch { Alert.alert("تعذر تشغيل الكاميرا", "تحقق من إذن الكاميرا ثم حاول مرة أخرى."); } finally { setBusy(false); }
+    try { setBusy(true); const next = !cameraOn; if (next) await requestCamera(); await room.localParticipant.setCameraEnabled(next); setCameraOn(next); setActivePane(next ? "camera" : "chat"); } catch { Alert.alert("تعذر تشغيل الكاميرا", "اسمح للكاميرا والميكروفون ثم حاول مرة أخرى."); } finally { setBusy(false); }
   };
   const startTalking = async () => {
     if (busy || callOn || selfModeration.muted || pendingPress.current) return;
     pendingPress.current = true;
-    try { await AudioSession.startAudioSession(); await room.localParticipant.setMicrophoneEnabled(true); setTalking(true); } catch { Alert.alert("تعذر تشغيل الهوكي توكي", "تحقق من إذن الميكروفون ثم اضغط مطولًا مرة أخرى."); } finally { pendingPress.current = false; }
+    try { await requestMicrophone(); await AudioSession.startAudioSession(); await room.localParticipant.setMicrophoneEnabled(true, audioCaptureOptions); setTalking(true); } catch { Alert.alert("تعذر تشغيل الهوكي توكي", "اسمح للميكروفون ثم اضغط مطولًا مرة أخرى."); } finally { pendingPress.current = false; }
   };
   const stopTalking = async () => { if (callOn || !talking) return; try { await room.localParticipant.setMicrophoneEnabled(false); await AudioSession.stopAudioSession(); } finally { setTalking(false); } };
   const sendChat = async () => {
@@ -138,19 +168,21 @@ function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, o
       <Tool active={activePane === "chat"} icon="chat-bubble-outline" label="الدردشة" tone="chat" onPress={() => setActivePane("chat")} />
       <Tool active={callOn} disabled={selfModeration.muted} icon={callOn ? "call-end" : "mic-none"} label="اتصال صوتي" tone="call" onPress={() => void openCall()} />
       <Tool active={cameraOn} disabled={selfModeration.cameraBlocked} icon={cameraOn ? "videocam" : "videocam-off"} label="اتصال كاميرا" tone="camera" onPress={() => void toggleCamera()} />
-      <Pressable accessibilityLabel="هوكي توكي، اضغط مطولًا للتحدث" accessibilityRole="button" disabled={selfModeration.muted} onPressIn={() => void startTalking()} onPressOut={() => void stopTalking()} style={({ pressed }) => [styles.tool, styles.toolTalk, talking && styles.toolTalkLive, selfModeration.muted && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color="#C9FCEB" name="radio" size={27} /><Text style={styles.toolLabel}>هوكي توكي</Text></Pressable>
+      <Pressable accessibilityLabel="هوكي توكي، اضغط مطولًا للتحدث" accessibilityRole="button" disabled={selfModeration.muted} onPressIn={() => void startTalking()} onPressOut={() => void stopTalking()} style={({ pressed }) => [styles.tool, styles.toolTalk, talking && styles.toolTalkLive, selfModeration.muted && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color="#C9FCEB" name="radio" size={22} /></Pressable>
       <Tool active={activePane === "members"} icon="groups-2" label={`الموجودون (${memberCount})`} tone="members" onPress={() => setActivePane("members")} />
+      <Tool active={activePane === "settings"} icon="tune" label="إعدادات الاتصال" tone="members" onPress={() => setActivePane("settings")} />
     </View>
-    {activePane === "chat" ? <View style={styles.chatPane}><View style={styles.chatHeader}><Text style={styles.chatHeaderTitle}>الدردشة العامة</Text><MaterialIcons color="#C5CDE3" name="keyboard-arrow-down" size={22} /></View><FlatList contentContainerStyle={chat.length ? styles.messagesContent : styles.messagesEmpty} data={chat} keyExtractor={(message) => message.id} renderItem={({ item }) => <ChatRow canDelete={item.mine || canModerate} message={item} onDelete={() => void removeChat(item)} />} showsVerticalScrollIndicator={false} style={styles.messages} /><View style={styles.composer}><Pressable accessibilityLabel="إرسال الرسالة" accessibilityRole="button" onPress={() => void sendChat()} style={({ pressed }) => [styles.send, pressed && styles.toolPressed]}><MaterialIcons color="#FFFFFF" name="send" size={25} /></Pressable><TextInput maxLength={800} onChangeText={setDraft} onSubmitEditing={() => void sendChat()} placeholder="اكتب رسالتك…" placeholderTextColor="#7383AA" returnKeyType="send" style={styles.chatInput} textAlign="right" value={draft} /><MaterialIcons color="#A4B0CC" name="sentiment-satisfied-alt" size={25} /></View></View> : null}
+    {activePane === "chat" ? <View style={styles.chatPane}><FlatList contentContainerStyle={chat.length ? styles.messagesContent : styles.messagesEmpty} data={chat} keyExtractor={(message) => message.id} renderItem={({ item }) => <ChatRow canDelete={item.mine || canModerate} message={item} onDelete={() => void removeChat(item)} />} showsVerticalScrollIndicator={false} style={styles.messages} /><View style={styles.composer}><Pressable accessibilityLabel="إرسال الرسالة" accessibilityRole="button" onPress={() => void sendChat()} style={({ pressed }) => [styles.send, pressed && styles.toolPressed]}><MaterialIcons color="#FFFFFF" name="send" size={22} /></Pressable><TextInput maxLength={800} onChangeText={setDraft} onSubmitEditing={() => void sendChat()} placeholder="اكتب رسالتك…" placeholderTextColor="#7383AA" returnKeyType="send" style={styles.chatInput} textAlign="right" value={draft} /></View></View> : null}
     {activePane === "camera" ? <View style={styles.cameraPane}><View style={styles.cameraGrid}>{cameraTracks.slice(0, 4).map((track, index) => isTrackReference(track) ? <VideoTrack key={track.publication.trackSid} style={styles.videoTrack} trackRef={track} /> : <View key={`placeholder-${index}`} style={styles.videoPlaceholder} />)}</View></View> : null}
     {activePane === "members" ? <MemberPanel canManage={canManageMembers} currentRole={role} members={members} onSelect={setSelectedMember} /> : null}
+    {activePane === "settings" ? <View style={styles.connectionPane}><View style={styles.connectionLine}><Text style={styles.connectionTitle}>صوت الاتصال</Text><View style={styles.voiceMeter}>{[0.18, 0.36, 0.62, 0.9].map((threshold, index) => <View key={threshold} style={[styles.voiceMeterBar, voiceLevel >= threshold && styles.voiceMeterBarActive, { height: 8 + index * 5 }]} />)}</View></View><LevelSelector value={callVolume} onChange={onCallVolumeChange} /><View style={styles.connectionActions}><Pressable accessibilityLabel="تغيير مخرج الصوت" onPress={() => void switchOutput()} style={({ pressed }) => [styles.connectionButton, pressed && styles.toolPressed]}><MaterialIcons color="#D9DFF1" name={speakerOutput ? "volume-up" : "phone-in-talk"} size={20} /></Pressable><Pressable accessibilityLabel="تبديل إزالة الضجيج" onPress={() => void setNoiseControl()} style={({ pressed }) => [styles.connectionButton, noiseSuppression && styles.connectionButtonActive, pressed && styles.toolPressed]}><MaterialIcons color="#D9DFF1" name="graphic-eq" size={20} /></Pressable><Pressable accessibilityLabel="كتم الميككروفون" onPress={() => void openCall()} style={({ pressed }) => [styles.connectionButton, callOn && styles.connectionButtonActive, pressed && styles.toolPressed]}><MaterialIcons color="#D9DFF1" name={callOn ? "mic" : "mic-off"} size={20} /></Pressable></View></View> : null}
     {selectedMember ? <MemberActionSheet callVolume={callVolume} member={selectedMember} onCallVolumeChange={onCallVolumeChange} onClose={() => setSelectedMember(null)} onMemberAction={applyMemberAction} onSaveAccess={saveMemberAccess} viewerRole={role} /> : null}
   </KeyboardAvoidingView>;
 }
 
 function Tool({ active, disabled = false, icon, label, tone, onPress }: { active: boolean; disabled?: boolean; icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string; tone: "camera" | "call" | "chat" | "members"; onPress: () => void }) {
   const toneStyle = tone === "camera" ? styles.toolCamera : tone === "call" ? styles.toolCall : tone === "members" ? styles.toolMembers : styles.toolChat;
-  return <Pressable accessibilityLabel={label} accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.tool, toneStyle, active && styles.toolActive, disabled && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color={active ? "#FFFFFF" : "#D9DFF1"} name={icon} size={27} /><Text style={styles.toolLabel}>{label}</Text></Pressable>;
+  return <Pressable accessibilityLabel={label} accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.tool, toneStyle, active && styles.toolActive, disabled && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color={active ? "#FFFFFF" : "#D9DFF1"} name={icon} size={22} /></Pressable>;
 }
 
 function ChatRow({ canDelete, message, onDelete }: { canDelete: boolean; message: ChatMessage; onDelete: () => void }) {
@@ -180,15 +212,17 @@ const styles = StyleSheet.create({
   actionButtonDanger: { backgroundColor: "#381E2A", borderColor: "#914258" }, actionButtonDangerText: { color: "#FFADAB" }, actionButtonText: { color: "#DADFFC", fontSize: 10, fontWeight: "800", textAlign: "center" }, actionGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 7 },
   actionGroupTitle: { color: "#AAB7D6", fontSize: 12, fontWeight: "900", marginBottom: 8, marginTop: 14, textAlign: "right" },
   avatar: { alignItems: "center", backgroundColor: "#28517E", borderRadius: 21, height: 42, justifyContent: "center", width: 42 }, avatarMine: { backgroundColor: "#6846D6" }, avatarText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
-  cameraGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 8, minHeight: 118 }, cameraPane: { backgroundColor: palette.panel, borderColor: "#2D456D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, overflow: "hidden", padding: 8 },
-  chatHeader: { alignItems: "center", borderBottomColor: "#29364F", borderBottomWidth: 1, flexDirection: "row-reverse", justifyContent: "flex-start", paddingBottom: 8 }, chatHeaderTitle: { color: "#F2F4FF", fontSize: 15, fontWeight: "900", textAlign: "right" },
-  chatInput: { backgroundColor: "#111C31", borderColor: "#2F405E", borderRadius: 14, borderWidth: 1, color: palette.text, flex: 1, fontSize: 14, height: 49, paddingHorizontal: 13 }, chatPane: { backgroundColor: "#10192A", borderColor: "#2A3C5D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, minHeight: 264, overflow: "hidden", paddingHorizontal: 14, paddingTop: 13 },
-  compactLoading: { alignItems: "center", height: 48, justifyContent: "center" }, composer: { alignItems: "center", borderTopColor: "#28364E", borderTopWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: -14, paddingHorizontal: 12, paddingVertical: 10 },
+  cameraGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 4, minHeight: 118 }, cameraPane: { backgroundColor: "transparent", flex: 1, marginTop: 6, overflow: "hidden", padding: 0 },
+  chatHeader: { height: 0 }, chatHeaderTitle: { height: 0 },
+  chatInput: { backgroundColor: "#111C31", borderColor: "#2F405E", borderRadius: 13, borderWidth: 1, color: palette.text, flex: 1, fontSize: 14, height: 43, paddingHorizontal: 13 }, chatPane: { backgroundColor: "transparent", flex: 1, marginTop: 5, minHeight: 210, overflow: "hidden", paddingHorizontal: 8, paddingTop: 5 },
+  compactLoading: { alignItems: "center", height: 30, justifyContent: "center" }, composer: { alignItems: "center", borderTopColor: "#28364E", borderTopWidth: 1, flexDirection: "row", gap: 7, marginHorizontal: -8, paddingHorizontal: 8, paddingVertical: 6 },
+  connectionActions: { flexDirection: "row-reverse", gap: 8, marginTop: 8 }, connectionButton: { alignItems: "center", backgroundColor: "#131E35", borderColor: "#304465", borderRadius: 12, borderWidth: 1, flex: 1, height: 42, justifyContent: "center" }, connectionButtonActive: { backgroundColor: "#3C2A7A", borderColor: "#9676FF" }, connectionLine: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-between" }, connectionPane: { backgroundColor: "transparent", flex: 1, marginTop: 6, minHeight: 170, paddingHorizontal: 12, paddingTop: 12 }, connectionTitle: { color: palette.text, fontSize: 14, fontWeight: "900" },
   levelSelector: { flexDirection: "row-reverse", gap: 6, paddingVertical: 8 }, levelStep: { backgroundColor: "#273652", borderRadius: 4, flex: 1, height: 8 }, levelStepActive: { backgroundColor: "#895DFF" },
   memberActionIdentity: { alignItems: "center", flexDirection: "row-reverse", gap: 9 }, memberActionName: { color: palette.text, fontSize: 14, fontWeight: "900", textAlign: "right" }, memberActionSheet: { backgroundColor: "#0F182A", borderColor: "#6D51C8", borderRadius: 20, borderWidth: 1, bottom: 8, left: 0, maxHeight: 430, padding: 14, position: "absolute", right: 0, shadowColor: "#000", shadowOpacity: 0.4, shadowRadius: 18 }, memberActionTop: { alignItems: "center", borderBottomColor: "#29364E", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingBottom: 11 },
   memberAvatar: { alignItems: "center", backgroundColor: "#254B76", borderRadius: 17, height: 34, justifyContent: "center", width: 34 }, memberInfo: { flex: 1, marginRight: 9 }, memberName: { color: palette.text, fontSize: 14, fontWeight: "800", textAlign: "right" }, memberPane: { backgroundColor: palette.panel, borderColor: "#2D456D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, minHeight: 264, padding: 10 }, memberRole: { color: palette.muted, fontSize: 10, marginTop: 2, textAlign: "right" }, memberRow: { alignItems: "center", borderBottomColor: "#263650", borderBottomWidth: 1, flexDirection: "row-reverse", minHeight: 60, paddingVertical: 8 },
   messageBody: { backgroundColor: "#1B2947", borderRadius: 14, flexShrink: 1, maxWidth: "82%", paddingHorizontal: 12, paddingVertical: 8 }, messageBodyMine: { backgroundColor: "#3D2D78" }, messageMeta: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-between" }, messageRow: { alignItems: "flex-start", flexDirection: "row-reverse", gap: 9, marginBottom: 12, paddingHorizontal: 1 }, messageSender: { color: "#AE91FF", fontSize: 12, fontWeight: "900", textAlign: "right" }, messageText: { color: palette.text, fontSize: 14, lineHeight: 21, marginTop: 3, textAlign: "right" }, messages: { flex: 1 }, messagesContent: { paddingBottom: 7, paddingTop: 10 }, messagesEmpty: { flexGrow: 1 },
-  panel: { backgroundColor: "transparent", flex: 1, marginHorizontal: 8, paddingTop: 16 }, permissionName: { color: "#E4E7F6", fontSize: 12, fontWeight: "700", textAlign: "right" }, permissionRow: { alignItems: "center", backgroundColor: "#141F35", borderColor: "#2D3E5E", borderRadius: 12, borderWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", marginTop: 7, minHeight: 43, paddingHorizontal: 11 }, permissionRowActive: { backgroundColor: "#281E58", borderColor: "#7A58DF" },
-  send: { alignItems: "center", backgroundColor: "#6F43D5", borderRadius: 15, height: 49, justifyContent: "center", width: 54 }, tool: { alignItems: "center", borderColor: "#283750", borderLeftWidth: 1, flex: 1, gap: 7, justifyContent: "center", minHeight: 105, paddingHorizontal: 4, paddingVertical: 10 }, toolActive: { backgroundColor: "#241C50", borderBottomColor: "#8D63FF", borderBottomWidth: 3 }, toolCall: { backgroundColor: "#121A2B" }, toolCamera: { backgroundColor: "#121A2B" }, toolChat: { backgroundColor: "#121A2B" }, toolDisabled: { opacity: 0.42 }, toolLabel: { color: "#D3DAEF", fontSize: 12, fontWeight: "800", textAlign: "center" }, toolMembers: { backgroundColor: "#121A2B" }, toolPressed: { opacity: 0.76, transform: [{ scale: 0.97 }] }, toolTalk: { backgroundColor: "#121A2B" }, toolTalkLive: { backgroundColor: "#1C665A", borderBottomColor: "#67E2C9", borderBottomWidth: 3 }, toolsRow: { backgroundColor: "#111A2B", borderColor: "#253653", borderRadius: 18, borderWidth: 1, flexDirection: "row-reverse", overflow: "hidden" },
+  panel: { backgroundColor: "transparent", flex: 1, marginHorizontal: 0, paddingTop: 4 }, permissionName: { color: "#E4E7F6", fontSize: 12, fontWeight: "700", textAlign: "right" }, permissionRow: { alignItems: "center", backgroundColor: "#141F35", borderColor: "#2D3E5E", borderRadius: 12, borderWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", marginTop: 7, minHeight: 43, paddingHorizontal: 11 }, permissionRowActive: { backgroundColor: "#281E58", borderColor: "#7A58DF" },
+  send: { alignItems: "center", backgroundColor: "#6F43D5", borderRadius: 13, height: 43, justifyContent: "center", width: 48 }, tool: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 44 }, toolActive: { backgroundColor: "#241C50", borderBottomColor: "#8D63FF", borderBottomWidth: 2 }, toolCall: { backgroundColor: "transparent" }, toolCamera: { backgroundColor: "transparent" }, toolChat: { backgroundColor: "transparent" }, toolDisabled: { opacity: 0.42 }, toolLabel: { height: 0, width: 0 }, toolMembers: { backgroundColor: "transparent" }, toolPressed: { opacity: 0.76, transform: [{ scale: 0.94 }] }, toolTalk: { backgroundColor: "transparent" }, toolTalkLive: { backgroundColor: "#1C665A", borderBottomColor: "#67E2C9", borderBottomWidth: 2 }, toolsRow: { borderBottomColor: "#253653", borderBottomWidth: 1, flexDirection: "row-reverse", minHeight: 44 },
+  voiceMeter: { alignItems: "flex-end", flexDirection: "row-reverse", gap: 3, height: 30 }, voiceMeterBar: { backgroundColor: "#2B3A56", borderRadius: 3, width: 5 }, voiceMeterBarActive: { backgroundColor: "#53E0A7" },
   unavailable: { alignItems: "center", backgroundColor: "#101A34", borderColor: "#293B66", borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", gap: 8, marginHorizontal: 10, marginTop: 8, padding: 12 }, unavailableText: { color: palette.muted, flex: 1, fontSize: 12, lineHeight: 18, textAlign: "right" }, videoPlaceholder: { backgroundColor: "#101A34", borderRadius: 12, height: 110, width: "48%" }, videoTrack: { backgroundColor: "#070B16", borderRadius: 12, height: 110, overflow: "hidden", width: "48%" },
 });

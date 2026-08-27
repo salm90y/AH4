@@ -9,7 +9,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { getGuestParticipantId } from "@/lib/guest-identity";
 import { parseM3uPlaylist, type M3uEntry } from "@/lib/m3u";
-import { createCloudRoom, joinCloudRoom, updateCloudRoomSettings, type RoomPermission, type RoomRole, type RoomVisibility } from "@/lib/room-api";
+import { createCloudRoom, joinCloudRoom, searchRoomYouTube, updateCloudRoomSettings, type RoomPermission, type RoomRole, type RoomVisibility, type YouTubeSearchResult } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -176,6 +176,9 @@ export function WatchPartyApp() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [youtubeQuery, setYoutubeQuery] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [youtubeResults, setYoutubeResults] = useState<YouTubeSearchResult[]>([]);
+  const [youtubeNextPage, setYoutubeNextPage] = useState<string | null>(null);
+  const [youtubeSearching, setYoutubeSearching] = useState(false);
   const [roomSearchInput, setRoomSearchInput] = useState("");
   const [searchHint, setSearchHint] = useState("");
   const [videoVolume, setVideoVolume] = useState(0.8);
@@ -200,6 +203,7 @@ export function WatchPartyApp() {
   } : null);
   const [channels, setChannels] = useState<M3uEntry[]>([]);
   const [channelQuery, setChannelQuery] = useState("");
+  const [channelDrawerOpen, setChannelDrawerOpen] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
 
@@ -315,10 +319,10 @@ export function WatchPartyApp() {
         return;
       }
       if (!youtubeQuery.trim()) {
-        setSearchHint("ألصق رابط YouTube رسميًا أو اكتب عبارة بحث بعد تفعيل مفتاح Data API.");
+        setSearchHint("اكتب كلمة أو جملة للبحث عن فيديوهات YouTube.");
         return;
       }
-      setSearchHint("سيعرض البحث حتى 20 نتيجة عند تفعيل YouTube Data API في الخادم. لا نستخرج روابط الفيديو أو نعيد بثه.");
+      void searchYouTube(false);
       return;
     }
 
@@ -336,6 +340,21 @@ export function WatchPartyApp() {
     setRoom((current) => (current ? { ...current, ...nextSource } : current));
     void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
     setScreen("room");
+  };
+
+  const searchYouTube = async (more: boolean) => {
+    if (!room || !youtubeQuery.trim() || youtubeSearching) return;
+    try {
+      setYoutubeSearching(true);
+      const result = await searchRoomYouTube({ roomCode: room.code, accessToken: room.accessToken, query: youtubeQuery.trim(), ...(more && youtubeNextPage ? { pageToken: youtubeNextPage } : {}) });
+      setYoutubeResults((current) => more ? [...current, ...result.items] : result.items);
+      setYoutubeNextPage(result.nextPageToken);
+      setSearchHint(result.items.length ? "اختر فيديو لفتحه في واجهة YouTube الرسمية." : "لم تظهر نتائج مطابقة.");
+    } catch (error) {
+      setSearchHint(error instanceof Error ? error.message : "تعذر البحث في YouTube الآن.");
+    } finally {
+      setYoutubeSearching(false);
+    }
   };
 
   const importM3u = async () => {
@@ -361,6 +380,7 @@ export function WatchPartyApp() {
 
       setChannels(parsed);
       setChannelQuery("");
+      setChannelDrawerOpen(true);
     } catch {
       Alert.alert("تعذر قراءة الملف", "حاول اختيار الملف مرة أخرى أو تأكد من صلاحية الوصول إليه.");
     }
@@ -398,8 +418,11 @@ export function WatchPartyApp() {
       return;
     }
     if (isStreamUrl) {
-      setSourceType("hls");
-      setSourceUrl(query);
+      const nextSource = { sourceLabel: query, sourceType: "hls" as const, sourceUrl: query };
+      setRoom((current) => current ? { ...current, ...nextSource } : current);
+      void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+      setRoomSearchInput("");
+      return;
     } else if (isYoutubeUrl) {
       setSourceType("youtube");
       setYoutubeUrl(query);
@@ -640,15 +663,16 @@ export function WatchPartyApp() {
           {sourceType === "youtube" ? (
             <View style={styles.sourcePanel}>
               <Field keyboardType="url" label="رابط فيديو YouTube المجاني" onChangeText={setYoutubeUrl} placeholder="https://youtu.be/..." value={youtubeUrl} />
-              <Text style={styles.sourceHelp}>يفتح الرابط في واجهة YouTube الرسمية من دون مفتاح API. يُستخدم البحث الداخلي فقط عند توفير مفتاح YouTube Data API.</Text>
+              <Text style={styles.sourceHelp}>يفتح الرابط في واجهة YouTube الرسمية. لا يعاد بث الفيديو أو استخراج رابط تشغيله داخل التطبيق.</Text>
               <Field label="ابحث في YouTube" onChangeText={setYoutubeQuery} placeholder="اكتب عنوانًا أو اسم قناة" value={youtubeQuery} />
-              <Text style={styles.sourceHelp}>ستظهر حتى 20 نتيجة مع زر «ابحث أكثر» عبر YouTube Data API الرسمي. التشغيل داخل الغرفة لا يستخرج روابط YouTube ولا يعيد بثها.</Text>
+              <Text style={styles.sourceHelp}>تظهر 20 نتيجة في كل صفحة. اختر أي فيديو لفتحه عبر YouTube الرسمي.</Text>
               {searchHint ? <Text style={styles.searchHint}>{searchHint}</Text> : null}
+              {youtubeResults.length ? <FlatList data={youtubeResults} keyExtractor={(item) => item.videoId} renderItem={({ item }) => <Pressable accessibilityLabel={`فتح ${item.title}`} onPress={() => void WebBrowser.openBrowserAsync(`https://www.youtube.com/watch?v=${item.videoId}`, { toolbarColor: "#0B1020", controlsColor: "#7C5CFC" })} style={({ pressed }) => [styles.youtubeRow, pressed && styles.pressed]}>{item.thumbnail ? <Image source={{ uri: item.thumbnail }} style={styles.youtubeThumb} /> : <View style={styles.youtubeThumbPlaceholder}><MaterialIcons color={colors.primary} name="play-circle-outline" size={25} /></View>}<View style={styles.youtubeCopy}><Text numberOfLines={2} style={styles.youtubeTitle}>{item.title}</Text><Text numberOfLines={1} style={styles.youtubeChannel}>{item.channelTitle}</Text></View></Pressable>} ListFooterComponent={youtubeNextPage ? <Pressable accessibilityLabel="بحث أكثر في YouTube" onPress={() => void searchYouTube(true)} style={({ pressed }) => [styles.youtubeMore, pressed && styles.pressed]}><Text style={styles.youtubeMoreText}>{youtubeSearching ? "جارٍ البحث…" : "ابحث أكثر"}</Text></Pressable> : null} style={styles.youtubeList} /> : null}
             </View>
           ) : null}
 
           <View style={styles.grow} />
-          <PrimaryButton icon={sourceType === "youtube" ? "search" : "check-circle-outline"} label={sourceType === "youtube" ? "بحث" : sourceType === "m3u" ? "اختيار ملف" : "تأكيد المصدر"} onPress={applySource} />
+          <PrimaryButton icon={sourceType === "youtube" ? "search" : "check-circle-outline"} label={sourceType === "youtube" ? (youtubeSearching ? "جارٍ البحث…" : "بحث") : sourceType === "m3u" ? "اختيار ملف" : "تأكيد المصدر"} onPress={applySource} />
         </KeyboardAvoidingView>
       </ScreenContainer>
     );
@@ -679,7 +703,7 @@ export function WatchPartyApp() {
             textAlign="right"
             value={roomSearchInput}
           />
-          <Pressable accessibilityLabel="إضافة ملف M3U أو M3U8" accessibilityRole="button" onPress={() => openRoomSource("m3u")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
+          <Pressable accessibilityLabel="إضافة ملف M3U أو M3U8" accessibilityRole="button" onPress={() => void importM3u()} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
             <MaterialIcons color="#FFFFFF" name="file-upload" size={25} />
             <Text style={styles.roomSearchUploadText}>إضافة ملف M3U8</Text>
           </Pressable>
@@ -698,6 +722,7 @@ export function WatchPartyApp() {
           permissions={room.permissions}
           role={room.role}
         /> : null}
+        {channelDrawerOpen ? <View style={styles.channelOverlay}><View style={styles.channelDrawer}><View style={styles.channelDrawerHeader}><Pressable accessibilityLabel="إغلاق قائمة القنوات" onPress={() => setChannelDrawerOpen(false)}><MaterialIcons color="#DCE2F4" name="close" size={23} /></Pressable><Text style={styles.channelDrawerTitle}>قنوات القائمة</Text></View><TextInput onChangeText={setChannelQuery} placeholder="ابحث عن قناة أو مجموعة" placeholderTextColor={colors.muted} style={styles.channelSearch} textAlign="right" value={channelQuery} /><FlatList data={filteredChannels.slice(0, 60)} keyExtractor={(item) => item.id} renderItem={({ item }) => <Pressable onPress={() => { chooseChannel(item); setChannelDrawerOpen(false); }} style={({ pressed }) => [styles.channelRow, pressed && styles.pressed]}><View style={styles.channelIcon}>{item.logo ? <Image source={{ uri: item.logo }} style={styles.channelLogo} /> : <MaterialIcons color={colors.cyan} name="play-circle-outline" size={22} />}</View><View style={styles.channelCopy}><Text numberOfLines={1} style={styles.channelName}>{item.name}</Text><Text numberOfLines={1} style={styles.channelGroup}>{item.group}</Text></View></Pressable>} style={styles.channelList} /></View></View> : null}
         {roomSettingsOpen && room ? <View style={styles.settingsOverlay}><View style={styles.settingsSheet}><View style={styles.settingsHeader}><Pressable accessibilityLabel="إغلاق الإعدادات" onPress={() => setRoomSettingsOpen(false)}><MaterialIcons color="#DCE2F4" name="close" size={23} /></Pressable><Text style={styles.settingsTitle}>إعدادات الغرفة</Text></View><Text style={styles.settingsSection}>صوت الفيديو</Text><LevelControl value={videoVolume} onChange={setVideoVolume} /><Text style={styles.settingsSection}>صوت الاتصال</Text><LevelControl value={callVolume} onChange={setCallVolume} />{room.role === "host" ? <><Text style={styles.settingsSection}>خصوصية الغرفة</Text><View style={styles.visibilityRow}>{(["private", "public"] as RoomVisibility[]).map((visibility) => <Pressable key={visibility} onPress={() => setSettingsVisibility(visibility)} style={({ pressed }) => [styles.visibilityOption, settingsVisibility === visibility && styles.visibilityOptionActive, pressed && styles.pressed]}><Text style={[styles.visibilityOptionText, settingsVisibility === visibility && styles.visibilityOptionTextActive]}>{visibility === "private" ? "خاصة" : "عامة"}</Text></Pressable>)}</View>{settingsVisibility === "private" ? <TextInput onChangeText={setSettingsPassword} placeholder="كلمة مرور جديدة (4 أحرف أو أكثر)" placeholderTextColor={colors.muted} secureTextEntry style={styles.settingsInput} textAlign="right" value={settingsPassword} /> : null}<PrimaryButton label="حفظ إعدادات الغرفة" onPress={() => void saveRoomSettings(settingsVisibility)} /></> : null}</View></View> : null}
       </KeyboardAvoidingView>
     </ScreenContainer>
@@ -736,6 +761,10 @@ const styles = StyleSheet.create({
   brandRow: { alignItems: "center", flexDirection: "row-reverse", gap: 11 },
   chatArea: { flex: 1, minHeight: 170, paddingHorizontal: 18, paddingTop: 12 },
   channelCopy: { flex: 1 },
+  channelDrawer: { backgroundColor: "#0D1628", borderColor: "#523F8E", borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, maxHeight: "72%", padding: 14 },
+  channelDrawerHeader: { alignItems: "center", borderBottomColor: "#293950", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", marginBottom: 12, paddingBottom: 11 },
+  channelDrawerTitle: { color: colors.text, fontSize: 18, fontWeight: "900", textAlign: "right" },
+  channelOverlay: { backgroundColor: "rgba(2,5,12,0.56)", bottom: 0, justifyContent: "flex-end", left: 0, position: "absolute", right: 0, top: 0 },
   channelGroup: { color: colors.muted, fontSize: 11, marginTop: 3, textAlign: "right" },
   channelIcon: { alignItems: "center", backgroundColor: "#29204C", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
   channelLogo: { borderRadius: 11, height: 38, width: 38 },
@@ -864,4 +893,13 @@ const styles = StyleSheet.create({
   videoPlaceholder: { alignItems: "center", flex: 1, justifyContent: "center", paddingHorizontal: 24 },
   videoPlaceholderText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 10, textAlign: "center" },
   videoTopRow: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-between" },
+  youtubeChannel: { color: "#94A4C4", fontSize: 11, marginTop: 4, textAlign: "right" },
+  youtubeCopy: { flex: 1 },
+  youtubeList: { marginTop: 12, maxHeight: 285 },
+  youtubeMore: { alignItems: "center", backgroundColor: "#251B51", borderColor: "#7154D8", borderRadius: 12, borderWidth: 1, justifyContent: "center", marginBottom: 6, marginTop: 10, minHeight: 43 },
+  youtubeMoreText: { color: "#D7CEFF", fontSize: 13, fontWeight: "900" },
+  youtubeRow: { alignItems: "center", borderBottomColor: "#263752", borderBottomWidth: 1, flexDirection: "row-reverse", gap: 10, minHeight: 72, paddingVertical: 8 },
+  youtubeThumb: { backgroundColor: "#11182A", borderRadius: 9, height: 50, width: 76 },
+  youtubeThumbPlaceholder: { alignItems: "center", backgroundColor: "#11182A", borderRadius: 9, height: 50, justifyContent: "center", width: 76 },
+  youtubeTitle: { color: colors.text, fontSize: 13, fontWeight: "800", lineHeight: 18, textAlign: "right" },
 });

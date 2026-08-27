@@ -305,6 +305,25 @@ async function updateRoomSettings(input, env) {
   return json({ visibility: input.visibility, passwordProtected: input.visibility === "private" });
 }
 
+async function searchYouTube(input, env) {
+  if (!input || !validRoomCode(input.roomCode) || typeof input.query !== "string" || input.query.trim().length < 1 || input.query.trim().length > 160 || (input.pageToken !== undefined && (typeof input.pageToken !== "string" || input.pageToken.length > 256))) return json({ error: "عبارة البحث غير صالحة." }, 400);
+  const actor = await authorizedMember(input.roomCode, input.accessToken, env);
+  if (!actor || !memberPermissions(actor.member).includes("search_youtube")) return json({ error: "ليس لديك إذن البحث في YouTube داخل هذه الغرفة." }, 403);
+  if (!env.YOUTUBE_DATA_API_KEY) return json({ error: "لم يُضبط بحث YouTube على الخادم بعد." }, 503);
+  const params = new URLSearchParams({ key: env.YOUTUBE_DATA_API_KEY, maxResults: "20", part: "snippet", q: input.query.trim(), type: "video" });
+  if (input.pageToken) params.set("pageToken", input.pageToken);
+  const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`);
+  if (!response.ok) return json({ error: "تعذر الحصول على نتائج YouTube الآن." }, 502);
+  const result = await response.json();
+  const items = Array.isArray(result.items) ? result.items.map((item) => ({
+    channelTitle: String(item?.snippet?.channelTitle || "YouTube"),
+    thumbnail: String(item?.snippet?.thumbnails?.medium?.url || item?.snippet?.thumbnails?.default?.url || ""),
+    title: String(item?.snippet?.title || "فيديو"),
+    videoId: String(item?.id?.videoId || ""),
+  })).filter((item) => item.videoId) : [];
+  return json({ items, nextPageToken: typeof result.nextPageToken === "string" ? result.nextPageToken : null });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
@@ -319,6 +338,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/rooms/members/permissions") return await setMemberPermissions(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/members/action") return await setMemberAction(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/settings") return await updateRoomSettings(await readJson(request), env);
+      if (request.method === "POST" && url.pathname === "/v1/rooms/youtube/search") return await searchYouTube(await readJson(request), env);
       return json({ error: "المسار غير موجود." }, 404);
     } catch {
       return json({ error: "تعذر الاتصال بخادم الغرف. حاول مرة أخرى." }, 500);

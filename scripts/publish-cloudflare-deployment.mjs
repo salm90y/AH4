@@ -20,6 +20,7 @@ const files = [
   "components/watch-party-app.tsx",
   "components/room-realtime-panel.native.tsx",
   "components/room-realtime-panel.web.tsx",
+  "components/room-realtime-panel.d.ts",
   "constants/oauth.ts",
   "design.md",
   "docs/cloudflare-architecture-notes.md",
@@ -37,6 +38,7 @@ const files = [
   "tests/cloudflare-livekit-token.test.ts",
   "tests/cloudflare-room-worker.test.ts",
   "tests/cloudflare-token.test.ts",
+  "tests/youtube-data-api.credentials.test.ts",
   "todo.md",
 ];
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "ah4-cloudflare-publish-"));
@@ -76,6 +78,7 @@ try {
     });
     tree.push({ path, mode: "100644", type: "blob", sha: blob.sha });
   }
+  tree.push({ path: "components/room-realtime-panel.tsx", mode: "100644", type: "blob", sha: null });
 
   const createdTree = api("POST", `repos/${repo}/git/trees`, { base_tree: headCommit.tree.sha, tree });
   const commit = api("POST", `repos/${repo}/git/commits`, {

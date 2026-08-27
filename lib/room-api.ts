@@ -16,6 +16,7 @@ export type RoomMember = {
 };
 
 export type RoomChatMessage = { id: string; authorId: string; authorName: string; text: string; createdAt: string };
+export type YouTubeSearchResult = { channelTitle: string; thumbnail: string; title: string; videoId: string };
 
 export type CloudRoomResponse = {
   code: string;
@@ -73,3 +74,4 @@ export function deleteRoomMessage(input: { roomCode: string; accessToken: string
 export function updateRoomMemberPermissions(input: { roomCode: string; accessToken: string; targetParticipantId: string; role: Exclude<RoomRole, "host">; permissions: RoomPermission[] }) { return requestJson<{ member: RoomMember }>("/v1/rooms/members/permissions", input); }
 export function performRoomMemberAction(input: { roomCode: string; accessToken: string; targetParticipantId: string; action: RoomMemberAction }) { return requestJson<{ member: RoomMember; action: RoomMemberAction }>("/v1/rooms/members/action", input); }
 export function updateCloudRoomSettings(input: { roomCode: string; accessToken: string; visibility: RoomVisibility; password?: string }) { return requestJson<{ visibility: RoomVisibility; passwordProtected: boolean }>("/v1/rooms/settings", input); }
+export function searchRoomYouTube(input: { roomCode: string; accessToken: string; query: string; pageToken?: string | null }) { return requestJson<{ items: YouTubeSearchResult[]; nextPageToken: string | null }>("/v1/rooms/youtube/search", input); }
