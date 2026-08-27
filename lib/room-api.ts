@@ -1,61 +1,91 @@
 import { getApiBaseUrl } from "@/constants/oauth";
 
+export type RoomPermission = "control_source" | "control_playback" | "moderate_chat";
+export type RoomRole = "host" | "moderator" | "member";
+
+export type RoomMember = {
+  participantId: string;
+  displayName: string;
+  role: RoomRole;
+  permissions: RoomPermission[];
+};
+
+export type RoomChatMessage = {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: string;
+};
+
 export type CloudRoomResponse = {
   code: string;
   name: string;
   host: boolean;
   passwordProtected: boolean;
+  role: RoomRole;
+  permissions: RoomPermission[];
+  accessToken: string;
   serverUrl: string;
   token: string;
 };
 
-type CreateRoomInput = {
+export type RoomStateResponse = {
+  code: string;
   name: string;
-  password: string;
-  participantId: string;
-  displayName: string;
+  role: RoomRole;
+  permissions: RoomPermission[];
+  members: RoomMember[];
+  messages: RoomChatMessage[];
 };
 
-type JoinRoomInput = {
-  code: string;
-  password: string;
-  participantId: string;
-  displayName: string;
-};
+type CreateRoomInput = { name: string; password: string; participantId: string; displayName: string };
+type JoinRoomInput = { code: string; password: string; participantId: string; displayName: string };
 
 function getProductionApiBaseUrl() {
   const baseUrl = getApiBaseUrl();
-  if (!baseUrl) {
-    throw new Error("لم يتم إعداد عنوان خادم الغرف في هذا الإصدار من التطبيق.");
-  }
+  if (!baseUrl) throw new Error("لم يتم إعداد عنوان خادم الغرف في هذا الإصدار من التطبيق.");
   return baseUrl;
 }
 
-async function requestRoom(path: string, input: CreateRoomInput | JoinRoomInput): Promise<CloudRoomResponse> {
+async function requestJson<T>(path: string, input?: unknown, method: "GET" | "POST" = "POST", accessToken?: string): Promise<T> {
   const response = await fetch(`${getProductionApiBaseUrl()}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    method,
+    headers: {
+      ...(input === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: input === undefined ? undefined : JSON.stringify(input),
   });
-
-  const payload = (await response.json().catch(() => null)) as
-    | CloudRoomResponse
-    | { error?: string }
-    | null;
+  const payload = (await response.json().catch(() => null)) as T | { error?: string } | null;
   if (!response.ok) {
-    const message = payload && "error" in payload ? payload.error : "تعذر الاتصال بخادم الغرف.";
+    const message = payload && typeof payload === "object" && "error" in payload ? payload.error : "تعذر الاتصال بخادم الغرف.";
     throw new Error(message || "تعذر الاتصال بخادم الغرف.");
   }
-  if (!payload || !("code" in payload) || !("name" in payload)) {
-    throw new Error("استجابة خادم الغرف غير صالحة.");
-  }
-  return payload;
+  if (!payload) throw new Error("استجابة خادم الغرف غير صالحة.");
+  return payload as T;
 }
 
 export function createCloudRoom(input: CreateRoomInput) {
-  return requestRoom("/v1/rooms", input);
+  return requestJson<CloudRoomResponse>("/v1/rooms", input);
 }
 
 export function joinCloudRoom(input: JoinRoomInput) {
-  return requestRoom("/v1/rooms/join", input);
+  return requestJson<CloudRoomResponse>("/v1/rooms/join", input);
+}
+
+export function getRoomState(input: { code: string; accessToken: string }) {
+  return requestJson<RoomStateResponse>(`/v1/rooms/${encodeURIComponent(input.code)}/state`, undefined, "GET", input.accessToken);
+}
+
+export function postRoomMessage(input: { roomCode: string; accessToken: string; id: string; text: string }) {
+  return requestJson<{ message: RoomChatMessage }>("/v1/rooms/messages", input);
+}
+
+export function deleteRoomMessage(input: { roomCode: string; accessToken: string; id: string }) {
+  return requestJson<{ id: string; deleted: boolean }>("/v1/rooms/messages/delete", input);
+}
+
+export function updateRoomMemberPermissions(input: { roomCode: string; accessToken: string; targetParticipantId: string; role: Exclude<RoomRole, "host">; permissions: RoomPermission[] }) {
+  return requestJson<{ member: RoomMember }>("/v1/rooms/members/permissions", input);
 }
