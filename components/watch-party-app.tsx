@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -389,14 +390,17 @@ export function WatchPartyApp() {
 
   const searchFromRoom = () => {
     const query = roomSearchInput.trim();
-    if (!room?.permissions.includes("control_source")) {
-      Alert.alert("صلاحية المصدر", "ليس لديك إذن البحث أو تغيير مصدر المشاهدة في هذه الغرفة.");
+    const isStreamUrl = /^https?:\/\//i.test(query) && /\.m3u8?(?:$|[?#])/i.test(query);
+    const isYoutubeUrl = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(query);
+    const isYoutubeSearch = Boolean(query) && !isStreamUrl && !isYoutubeUrl;
+    if ((isYoutubeSearch && !room?.permissions.includes("search_youtube")) || (!isYoutubeSearch && !room?.permissions.includes("control_source"))) {
+      Alert.alert("صلاحية المصدر", isYoutubeSearch ? "ليس لديك إذن البحث عن YouTube في هذه الغرفة." : "ليس لديك إذن تغيير مصدر المشاهدة في هذه الغرفة.");
       return;
     }
-    if (/^https?:\/\//i.test(query) && /\.m3u8?(?:$|[?#])/i.test(query)) {
+    if (isStreamUrl) {
       setSourceType("hls");
       setSourceUrl(query);
-    } else if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(query)) {
+    } else if (isYoutubeUrl) {
       setSourceType("youtube");
       setYoutubeUrl(query);
     } else if (room?.permissions.includes("search_youtube")) {
@@ -619,9 +623,7 @@ export function WatchPartyApp() {
                     ListEmptyComponent={<Text style={styles.noChannels}>لا توجد نتيجة مطابقة.</Text>}
                     renderItem={({ item }) => (
                       <Pressable onPress={() => chooseChannel(item)} style={({ pressed }) => [styles.channelRow, pressed && styles.pressed]}>
-                        <View style={styles.channelIcon}>
-                          <MaterialIcons color={colors.cyan} name="play-circle-outline" size={22} />
-                        </View>
+                        <View style={styles.channelIcon}>{item.logo ? <Image source={{ uri: item.logo }} style={styles.channelLogo} /> : <MaterialIcons color={colors.cyan} name="play-circle-outline" size={22} />}</View>
                         <View style={styles.channelCopy}>
                           <Text numberOfLines={1} style={styles.channelName}>{item.name}</Text>
                           <Text numberOfLines={1} style={styles.channelGroup}>{item.group}</Text>
@@ -736,6 +738,7 @@ const styles = StyleSheet.create({
   channelCopy: { flex: 1 },
   channelGroup: { color: colors.muted, fontSize: 11, marginTop: 3, textAlign: "right" },
   channelIcon: { alignItems: "center", backgroundColor: "#29204C", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
+  channelLogo: { borderRadius: 11, height: 38, width: 38 },
   channelList: { backgroundColor: "#0B1324", borderColor: "#263B60", borderRadius: 15, borderWidth: 1, maxHeight: 265, paddingHorizontal: 10 },
   channelName: { color: colors.text, fontSize: 14, fontWeight: "900", textAlign: "right" },
   channelRow: { alignItems: "center", borderBottomColor: "#23324D", borderBottomWidth: 1, flexDirection: "row-reverse", gap: 11, minHeight: 62, paddingVertical: 10 },
