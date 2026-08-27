@@ -9,7 +9,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { getGuestParticipantId } from "@/lib/guest-identity";
 import { parseM3uPlaylist, type M3uEntry } from "@/lib/m3u";
-import { createCloudRoom, joinCloudRoom, type RoomPermission, type RoomRole } from "@/lib/room-api";
+import { createCloudRoom, joinCloudRoom, updateCloudRoomSettings, type RoomPermission, type RoomRole, type RoomVisibility } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -37,6 +37,7 @@ type RoomState = {
   accessToken: string;
   participantId: string;
   passwordProtected: boolean;
+  visibility: RoomVisibility;
   sourceLabel: string;
   sourceType: SourceType | null;
   sourceUrl: string | null;
@@ -158,11 +159,16 @@ function Field({
   );
 }
 
+function LevelControl({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  return <View style={styles.levelControl}>{[0, 0.25, 0.5, 0.75, 1].map((level) => <Pressable accessibilityLabel={`مستوى الصوت ${Math.round(level * 100)}%`} key={level} onPress={() => onChange(level)} style={({ pressed }) => [styles.levelControlStep, level <= value && styles.levelControlStepActive, pressed && styles.pressed]} />)}</View>;
+}
+
 export function WatchPartyApp() {
   const roomPreviewEnabled = Platform.OS === "web" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("room-preview") === "1";
   const [screen, setScreen] = useState<Screen>(() => (roomPreviewEnabled ? "room" : "home"));
   const [createName, setCreateName] = useState("");
   const [createPassword, setCreatePassword] = useState("");
+  const [createVisibility, setCreateVisibility] = useState<RoomVisibility>("private");
   const [joinName, setJoinName] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("hls");
@@ -171,6 +177,11 @@ export function WatchPartyApp() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [roomSearchInput, setRoomSearchInput] = useState("");
   const [searchHint, setSearchHint] = useState("");
+  const [videoVolume, setVideoVolume] = useState(0.8);
+  const [callVolume, setCallVolume] = useState(0.8);
+  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
+  const [settingsPassword, setSettingsPassword] = useState("");
+  const [settingsVisibility, setSettingsVisibility] = useState<RoomVisibility>("private");
   const [room, setRoom] = useState<RoomState | null>(() => roomPreviewEnabled ? {
     code: "AH4-RIOVJ8",
     name: "مراجعة التصميم",
@@ -180,6 +191,7 @@ export function WatchPartyApp() {
     accessToken: "",
     participantId: "preview_host_12345678",
     passwordProtected: true,
+    visibility: "private",
     sourceLabel: "لم يتم اختيار مصدر بعد",
     sourceType: null,
     sourceUrl: null,
@@ -231,6 +243,7 @@ export function WatchPartyApp() {
         password: password.trim(),
         participantId,
         displayName: "المضيف",
+        visibility: createVisibility,
       });
       setRoom({
         code: created.code,
@@ -241,6 +254,7 @@ export function WatchPartyApp() {
         accessToken: created.accessToken,
         participantId,
         passwordProtected: created.passwordProtected,
+        visibility: created.visibility,
         sourceLabel: "لم يتم اختيار مصدر بعد",
         sourceType: null,
         sourceUrl: null,
@@ -278,6 +292,7 @@ export function WatchPartyApp() {
         accessToken: joined.accessToken,
         participantId,
         passwordProtected: joined.passwordProtected,
+        visibility: joined.visibility,
         sourceLabel: "بانتظار المصدر من المضيف",
         sourceType: null,
         sourceUrl: null,
@@ -384,12 +399,27 @@ export function WatchPartyApp() {
     } else if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(query)) {
       setSourceType("youtube");
       setYoutubeUrl(query);
-    } else {
+    } else if (room?.permissions.includes("search_youtube")) {
       setSourceType("youtube");
       setYoutubeQuery(query);
+    } else {
+      Alert.alert("صلاحية البحث", "ليس لديك إذن البحث عن YouTube في هذه الغرفة.");
+      return;
     }
     setSearchHint("");
     setScreen("media");
+  };
+
+  const saveRoomSettings = async (visibility: RoomVisibility) => {
+    if (!room || room.role !== "host") return;
+    try {
+      const updated = await updateCloudRoomSettings({ roomCode: room.code, accessToken: room.accessToken, visibility, ...(visibility === "private" ? { password: settingsPassword } : {}) });
+      setRoom((current) => current ? { ...current, visibility: updated.visibility, passwordProtected: updated.passwordProtected } : current);
+      setSettingsPassword("");
+      setRoomSettingsOpen(false);
+    } catch (error) {
+      Alert.alert("تعذر حفظ الإعدادات", error instanceof Error ? error.message : "حاول مرة أخرى.");
+    }
   };
 
   const filteredChannels = useMemo(() => {
@@ -493,7 +523,10 @@ export function WatchPartyApp() {
             <Text style={styles.formSubtitle}>أنت ستكون المضيف ويمكنك تغيير المصدر والتحكم بالتشغيل.</Text>
           </View>
           <Field label="اسم الغرفة" onChangeText={setCreateName} placeholder="مثال: سهرة الجمعة" value={createName} />
-          <Field label="كلمة المرور (اختيارية)" onChangeText={setCreatePassword} placeholder="اجعل الغرفة خاصة" secureTextEntry value={createPassword} />
+          {createVisibility === "private" ? <Field label="كلمة مرور الغرفة" onChangeText={setCreatePassword} placeholder="4 أحرف أو أكثر" secureTextEntry value={createPassword} /> : <View style={styles.noteCard}><MaterialIcons color={colors.cyan} name="public" size={21} /><Text style={styles.noteText}>الغرفة العامة لا تحتاج كلمة مرور، لكنها تستخدم رمز الانضمام الخاص بها.</Text></View>}
+          <View style={styles.visibilityRow}>
+            {(["private", "public"] as RoomVisibility[]).map((visibility) => <Pressable key={visibility} onPress={() => setCreateVisibility(visibility)} style={({ pressed }) => [styles.visibilityOption, createVisibility === visibility && styles.visibilityOptionActive, pressed && styles.pressed]}><MaterialIcons color={createVisibility === visibility ? "#FFFFFF" : colors.muted} name={visibility === "private" ? "lock-outline" : "public"} size={19} /><Text style={[styles.visibilityOptionText, createVisibility === visibility && styles.visibilityOptionTextActive]}>{visibility === "private" ? "خاصة" : "عامة"}</Text></Pressable>)}
+          </View>
           <View style={styles.noteCard}>
             <MaterialIcons color={colors.warning} name="lock-outline" size={21} />
             <Text style={styles.noteText}>يمكنك إضافة مصدر المشاهدة الآن أو من داخل الغرفة لاحقًا.</Text>
@@ -622,18 +655,10 @@ export function WatchPartyApp() {
   return (
     <ScreenContainer className="" edges={["top", "left", "right", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.roomScreen}>
-        <View style={styles.roomHeader}>
-          <View style={styles.roomBrandMark}><Text style={styles.roomBrandText}>AH</Text></View>
-          <View style={styles.roomUserChip}><Text numberOfLines={1} style={styles.roomUserText}>{room?.role === "host" ? "المضيف" : room?.role === "moderator" ? "مشرف" : "عضو"}</Text></View>
-          <Pressable accessibilityLabel="عرض رمز واسم الغرفة" accessibilityRole="button" onPress={() => Alert.alert(room?.name ?? "الغرفة", room?.code ?? roomCode)} style={({ pressed }) => [styles.roomCodeChip, pressed && styles.pressed]}>
-            <Text numberOfLines={1} style={styles.roomCodeText}>{(room?.code ?? roomCode).replace("AH4-", "#")}</Text>
-          </Pressable>
-          <View style={styles.roomHeaderIconGold}><MaterialIcons color="#FFD24A" name="workspace-premium" size={20} /></View>
-          <View style={styles.roomHeaderIconShield}><MaterialIcons color="#9A8CFF" name="security" size={19} /></View>
-          <View style={styles.roomMemberChip}><Text style={styles.roomMemberText}>•</Text><MaterialIcons color="#57E7B2" name="group" size={20} /></View>
-          <Pressable accessibilityLabel="مغادرة الغرفة" accessibilityRole="button" onPress={returnHome} style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}>
-            <MaterialIcons color="#FFFFFF" name="logout" size={18} />
-          </Pressable>
+        <View style={styles.referenceHeader}>
+          <Pressable accessibilityLabel="مغادرة الغرفة" accessibilityRole="button" onPress={returnHome} style={({ pressed }) => [styles.referenceHeaderButton, pressed && styles.pressed]}><MaterialIcons color="#F3F5FF" name="arrow-back" size={27} /></Pressable>
+          <View style={styles.referenceRoomTitle}><Text numberOfLines={1} style={styles.referenceTitle}>{room?.name ?? "غرفة مشاهدة جماعية"}</Text><View style={styles.referenceMeta}><View style={styles.referenceLiveDot} /><Text style={styles.referenceMetaText}>مباشر الآن</Text><View style={styles.referenceMetaDivider} /><MaterialIcons color="#AAB7D0" name="groups-2" size={17} /><Text style={styles.referenceMetaText}>{room?.role === "host" ? "المضيف" : "متصل"}</Text></View></View>
+          <View style={styles.referenceHeaderActions}><Pressable accessibilityLabel="مشاركة رمز الغرفة" onPress={() => Alert.alert("رمز الغرفة", room?.code ?? roomCode)} style={({ pressed }) => [styles.referenceHeaderButton, pressed && styles.pressed]}><MaterialIcons color="#F3F5FF" name="share" size={22} /></Pressable><Pressable accessibilityLabel="إعدادات الغرفة" onPress={() => { setSettingsVisibility(room?.visibility ?? "private"); setRoomSettingsOpen(true); }} style={({ pressed }) => [styles.referenceHeaderButton, pressed && styles.pressed]}><MaterialIcons color="#F3F5FF" name="more-vert" size={24} /></Pressable></View>
         </View>
 
         <View style={styles.roomSearchRow}>
@@ -645,43 +670,64 @@ export function WatchPartyApp() {
             autoCorrect={false}
             onChangeText={setRoomSearchInput}
             onSubmitEditing={searchFromRoom}
-            placeholder="ابحث في يوتيوب أو ضع رابط مباشر (TS)"
+            placeholder="أدخل رابط يوتيوب أو كلمة بحث"
             placeholderTextColor="#9AA6C2"
             returnKeyType="search"
             style={styles.roomSearchInput}
             textAlign="right"
             value={roomSearchInput}
           />
-          <Pressable accessibilityLabel="استيراد ملف M3U" accessibilityRole="button" onPress={() => openRoomSource("m3u")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
+          <Pressable accessibilityLabel="إضافة ملف M3U أو M3U8" accessibilityRole="button" onPress={() => openRoomSource("m3u")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
             <MaterialIcons color="#FFFFFF" name="file-upload" size={25} />
-          </Pressable>
-          <Pressable accessibilityLabel="إضافة رابط M3U8" accessibilityRole="button" onPress={() => openRoomSource("hls")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchLink, pressed && styles.pressed]}>
-            <MaterialIcons color="#E9B3FF" name="language" size={25} />
-          </Pressable>
-          <Pressable accessibilityLabel="اختيار مصدر المشاهدة" accessibilityRole="button" onPress={() => openRoomSource("hls")} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchPlaylist, pressed && styles.pressed]}>
-            <MaterialIcons color="#B6D7FF" name="playlist-play" size={26} />
+            <Text style={styles.roomSearchUploadText}>إضافة ملف M3U8</Text>
           </Pressable>
         </View>
 
         <View style={styles.playerWrap}>
-          <NativeMediaPlayer canControl={room?.permissions.includes("control_playback") ?? false} sourceUrl={room?.sourceUrl ?? null} />
+          <NativeMediaPlayer canControl={room?.permissions.includes("control_playback") ?? false} onVolumeChange={setVideoVolume} sourceUrl={room?.sourceUrl ?? null} volume={videoVolume} />
         </View>
         {room ? <RoomRealtimePanel
           accessToken={room.accessToken}
+          callVolume={callVolume}
           credentials={room.credentials}
+          onCallVolumeChange={setCallVolume}
           onSelfAccessChange={applySelfAccess}
           participantId={room.participantId}
           permissions={room.permissions}
           role={room.role}
         /> : null}
+        {roomSettingsOpen && room ? <View style={styles.settingsOverlay}><View style={styles.settingsSheet}><View style={styles.settingsHeader}><Pressable accessibilityLabel="إغلاق الإعدادات" onPress={() => setRoomSettingsOpen(false)}><MaterialIcons color="#DCE2F4" name="close" size={23} /></Pressable><Text style={styles.settingsTitle}>إعدادات الغرفة</Text></View><Text style={styles.settingsSection}>صوت الفيديو</Text><LevelControl value={videoVolume} onChange={setVideoVolume} /><Text style={styles.settingsSection}>صوت الاتصال</Text><LevelControl value={callVolume} onChange={setCallVolume} />{room.role === "host" ? <><Text style={styles.settingsSection}>خصوصية الغرفة</Text><View style={styles.visibilityRow}>{(["private", "public"] as RoomVisibility[]).map((visibility) => <Pressable key={visibility} onPress={() => setSettingsVisibility(visibility)} style={({ pressed }) => [styles.visibilityOption, settingsVisibility === visibility && styles.visibilityOptionActive, pressed && styles.pressed]}><Text style={[styles.visibilityOptionText, settingsVisibility === visibility && styles.visibilityOptionTextActive]}>{visibility === "private" ? "خاصة" : "عامة"}</Text></Pressable>)}</View>{settingsVisibility === "private" ? <TextInput onChangeText={setSettingsPassword} placeholder="كلمة مرور جديدة (4 أحرف أو أكثر)" placeholderTextColor={colors.muted} secureTextEntry style={styles.settingsInput} textAlign="right" value={settingsPassword} /> : null}<PrimaryButton label="حفظ إعدادات الغرفة" onPress={() => void saveRoomSettings(settingsVisibility)} /></> : null}</View></View> : null}
       </KeyboardAvoidingView>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  levelControl: { flexDirection: "row-reverse", gap: 7, marginBottom: 4, paddingVertical: 8 },
+  levelControlStep: { backgroundColor: "#2D3D60", borderRadius: 4, flex: 1, height: 9 },
+  levelControlStepActive: { backgroundColor: "#8B5CF6" },
+  referenceHeader: { alignItems: "center", borderBottomColor: "#222C42", borderBottomWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", minHeight: 76, paddingHorizontal: 10, paddingVertical: 7 },
+  referenceHeaderActions: { flexDirection: "row-reverse", gap: 8 },
+  referenceHeaderButton: { alignItems: "center", backgroundColor: "#121A2B", borderColor: "#283650", borderRadius: 13, borderWidth: 1, height: 48, justifyContent: "center", width: 48 },
+  referenceLiveDot: { backgroundColor: "#25D878", borderRadius: 5, height: 9, width: 9 },
+  referenceMeta: { alignItems: "center", flexDirection: "row-reverse", gap: 7, marginTop: 4 },
+  referenceMetaDivider: { backgroundColor: "#31405A", height: 15, width: 1 },
+  referenceMetaText: { color: "#AAB4CB", fontSize: 12, textAlign: "right" },
+  referenceRoomTitle: { alignItems: "center", flex: 1, paddingHorizontal: 8 },
+  referenceTitle: { color: "#FAFAFF", fontSize: 22, fontWeight: "900", textAlign: "center" },
+  settingsHeader: { alignItems: "center", borderBottomColor: "#2C3B58", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingBottom: 11 },
+  settingsInput: { backgroundColor: "#111A2D", borderColor: "#354767", borderRadius: 13, borderWidth: 1, color: colors.text, fontSize: 13, height: 46, marginBottom: 11, paddingHorizontal: 12 },
+  settingsOverlay: { backgroundColor: "rgba(3,6,14,0.58)", bottom: 0, justifyContent: "flex-end", left: 0, position: "absolute", right: 0, top: 0 },
+  settingsSection: { color: "#ABB8D5", fontSize: 12, fontWeight: "900", marginTop: 15, textAlign: "right" },
+  settingsSheet: { backgroundColor: "#111A2D", borderColor: "#57438C", borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, padding: 16 },
+  settingsTitle: { color: colors.text, fontSize: 18, fontWeight: "900", textAlign: "right" },
+  visibilityOption: { alignItems: "center", backgroundColor: "#121D33", borderColor: "#344561", borderRadius: 13, borderWidth: 1, flex: 1, flexDirection: "row-reverse", gap: 7, height: 46, justifyContent: "center" },
+  visibilityOptionActive: { backgroundColor: "#5F3DC1", borderColor: "#A98AFF" },
+  visibilityOptionText: { color: "#B6C1D9", fontSize: 13, fontWeight: "800" },
+  visibilityOptionTextActive: { color: "#FFFFFF" },
+  visibilityRow: { flexDirection: "row-reverse", gap: 9, marginBottom: 16 },
   actionStack: { gap: 11, marginTop: 24 },
-  backButton: { alignItems: "center", backgroundColor: colors.surface, borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
+  backButton: { alignItems: "center", backgroundColor: "#121A2B", borderColor: "#2D3D5B", borderRadius: 14, borderWidth: 1, height: 46, justifyContent: "center", width: 46 },
   brandCaption: { color: "#8795BD", fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginTop: 2, textAlign: "right" },
   brandMark: { alignItems: "center", borderRadius: 18, height: 52, justifyContent: "center", overflow: "hidden", width: 52 },
   brandName: { color: colors.text, fontSize: 22, fontWeight: "900", letterSpacing: 0.5, textAlign: "right" },
@@ -689,11 +735,11 @@ const styles = StyleSheet.create({
   chatArea: { flex: 1, minHeight: 170, paddingHorizontal: 18, paddingTop: 12 },
   channelCopy: { flex: 1 },
   channelGroup: { color: colors.muted, fontSize: 11, marginTop: 3, textAlign: "right" },
-  channelIcon: { alignItems: "center", backgroundColor: "#172642", borderRadius: 12, height: 38, justifyContent: "center", width: 38 },
-  channelList: { maxHeight: 245 },
-  channelName: { color: colors.text, fontSize: 14, fontWeight: "800", textAlign: "right" },
-  channelRow: { alignItems: "center", borderBottomColor: colors.border, borderBottomWidth: 1, flexDirection: "row-reverse", gap: 10, paddingVertical: 10 },
-  channelSearch: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 13, borderWidth: 1, color: colors.text, fontSize: 14, height: 44, marginBottom: 10, paddingHorizontal: 12 },
+  channelIcon: { alignItems: "center", backgroundColor: "#29204C", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
+  channelList: { backgroundColor: "#0B1324", borderColor: "#263B60", borderRadius: 15, borderWidth: 1, maxHeight: 265, paddingHorizontal: 10 },
+  channelName: { color: colors.text, fontSize: 14, fontWeight: "900", textAlign: "right" },
+  channelRow: { alignItems: "center", borderBottomColor: "#23324D", borderBottomWidth: 1, flexDirection: "row-reverse", gap: 11, minHeight: 62, paddingVertical: 10 },
+  channelSearch: { backgroundColor: "#0B1324", borderColor: "#33486D", borderRadius: 14, borderWidth: 1, color: colors.text, fontSize: 14, height: 47, marginBottom: 11, paddingHorizontal: 13 },
   chatComposer: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 6 },
   chatEmptyContent: { flexGrow: 1, justifyContent: "center" },
   chatEmptyText: { color: colors.muted, fontSize: 13, lineHeight: 19, paddingHorizontal: 12, textAlign: "center" },
@@ -706,19 +752,19 @@ const styles = StyleSheet.create({
   chatTitleRow: { alignItems: "center", flexDirection: "row-reverse", gap: 7 },
   controlRow: { flexDirection: "row-reverse", gap: 8, justifyContent: "space-between", paddingHorizontal: 18, paddingVertical: 14 },
   divider: { backgroundColor: colors.border, height: 24, width: 1 },
-  fieldBlock: { marginBottom: 18 },
-  fieldInput: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 16, borderWidth: 1, color: colors.text, fontSize: 16, height: 53, paddingHorizontal: 16 },
-  fieldLabel: { color: colors.text, fontSize: 14, fontWeight: "700", marginBottom: 8, textAlign: "right" },
+  fieldBlock: { marginBottom: 17 },
+  fieldInput: { backgroundColor: "#10192A", borderColor: "#304160", borderRadius: 16, borderWidth: 1, color: colors.text, fontSize: 16, height: 56, paddingHorizontal: 16 },
+  fieldLabel: { color: "#DCE4F8", fontSize: 13, fontWeight: "800", marginBottom: 8, textAlign: "right" },
   featureIcon: { alignItems: "center", backgroundColor: "rgba(50,215,231,0.11)", borderRadius: 10, height: 28, justifyContent: "center", width: 28 },
   featureItem: { alignItems: "center", flexDirection: "row-reverse", gap: 7 },
   featureLabel: { color: "#B7C3E0", fontSize: 11, fontWeight: "800" },
   featureRail: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-around", marginTop: 17, paddingHorizontal: 5 },
   fileDrop: { alignItems: "center", gap: 10, paddingVertical: 18 },
   fileDropTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
-  formIntro: { marginBottom: 24, marginTop: 8 },
-  formScreen: { flex: 1, paddingHorizontal: 22, paddingVertical: 14 },
-  formSubtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 7, textAlign: "right" },
-  formTitle: { color: colors.text, fontSize: 26, fontWeight: "900", textAlign: "right" },
+  formIntro: { borderBottomColor: "#263550", borderBottomWidth: 1, marginBottom: 24, marginTop: 8, paddingBottom: 18 },
+  formScreen: { backgroundColor: "#0B1222", flex: 1, paddingHorizontal: 18, paddingVertical: 14 },
+  formSubtitle: { color: "#A5B2CE", fontSize: 14, lineHeight: 22, marginTop: 7, textAlign: "right" },
+  formTitle: { color: colors.text, fontSize: 27, fontWeight: "900", textAlign: "right" },
   grow: { flex: 1 },
   headerSpacer: { width: 42 },
   heroBody: { color: "#B7C4E4", fontSize: 15, lineHeight: 24, marginTop: 13, textAlign: "right" },
@@ -752,7 +798,7 @@ const styles = StyleSheet.create({
   messageAuthor: { color: colors.cyan, fontSize: 11, fontWeight: "800", textAlign: "right" },
   messageBody: { color: colors.text, fontSize: 14, lineHeight: 20, marginTop: 3, textAlign: "right" },
   messageBubble: { alignSelf: "flex-end", backgroundColor: colors.surface, borderRadius: 14, maxWidth: "82%", paddingHorizontal: 12, paddingVertical: 9 },
-  noteCard: { alignItems: "flex-start", backgroundColor: "#1C2035", borderColor: "#38415F", borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", gap: 9, padding: 13 },
+  noteCard: { alignItems: "flex-start", backgroundColor: "#121C31", borderColor: "#344968", borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", gap: 9, padding: 14 },
   noteText: { color: "#D7DDF4", flex: 1, fontSize: 13, lineHeight: 19, textAlign: "right" },
   noChannels: { color: colors.muted, fontSize: 13, paddingVertical: 18, textAlign: "center" },
   playOrb: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 30, height: 60, justifyContent: "center", width: 60 },
@@ -781,13 +827,14 @@ const styles = StyleSheet.create({
   roomMemberChip: { alignItems: "center", backgroundColor: "#0B101F", borderColor: "#26334B", borderRadius: 9, borderWidth: 1, flexDirection: "row-reverse", gap: 2, height: 34, justifyContent: "center", width: 34 },
   roomMemberText: { color: "#F0F3FF", fontSize: 11, fontWeight: "800" },
   roomScreen: { backgroundColor: "#0B1222", flex: 1 },
-  roomSearchAction: { alignItems: "center", borderRadius: 13, height: 40, justifyContent: "center", width: 40 },
-  roomSearchButton: { alignItems: "center", backgroundColor: "#E70821", borderRadius: 13, height: 40, justifyContent: "center", shadowColor: "#FF0033", shadowOpacity: 0.42, shadowRadius: 12, width: 40 },
-  roomSearchInput: { backgroundColor: "#111827", borderColor: "#33425E", borderRadius: 14, borderWidth: 1, color: "#F5F7FF", flex: 1, fontSize: 12, height: 40, minWidth: 76, paddingHorizontal: 10 },
+  roomSearchAction: { alignItems: "center", borderRadius: 13, height: 54, justifyContent: "center", width: 48 },
+  roomSearchButton: { alignItems: "center", backgroundColor: "#6E43D7", borderRadius: 13, height: 54, justifyContent: "center", shadowColor: "#7B55F1", shadowOpacity: 0.42, shadowRadius: 12, width: 62 },
+  roomSearchInput: { backgroundColor: "#111827", borderColor: "#33425E", borderRadius: 14, borderWidth: 1, color: "#F5F7FF", flex: 1, fontSize: 13, height: 54, minWidth: 76, paddingHorizontal: 12 },
   roomSearchLink: { backgroundColor: "#311268", borderColor: "#7730B2", borderWidth: 1 },
   roomSearchPlaylist: { backgroundColor: "#112D66", borderColor: "#1F64C8", borderWidth: 1 },
-  roomSearchRow: { alignItems: "center", flexDirection: "row", gap: 5, paddingHorizontal: 8, paddingVertical: 7 },
-  roomSearchUpload: { backgroundColor: "#263044", borderColor: "#45536F", borderWidth: 1 },
+  roomSearchRow: { alignItems: "center", flexDirection: "row", gap: 7, paddingHorizontal: 8, paddingVertical: 13 },
+  roomSearchUpload: { backgroundColor: "#151C2C", borderColor: "#33405B", borderWidth: 1, flexDirection: "row-reverse", gap: 7, paddingHorizontal: 10, width: 150 },
+  roomSearchUploadText: { color: "#F3F5FF", fontSize: 12, fontWeight: "800" },
   roomUserChip: { backgroundColor: "#242B3A", borderColor: "#44506A", borderRadius: 9, borderWidth: 1, maxWidth: 50, paddingHorizontal: 6, paddingVertical: 8 },
   roomUserText: { color: "#F5F7FF", fontSize: 10, fontWeight: "900", textAlign: "center" },
   screenHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 27 },
@@ -800,7 +847,7 @@ const styles = StyleSheet.create({
   sourceBadge: { alignItems: "center", backgroundColor: "#242E4D", borderRadius: 999, flexDirection: "row-reverse", gap: 5, paddingHorizontal: 8, paddingVertical: 5 },
   sourceBadgeText: { color: colors.text, fontSize: 10, fontWeight: "800" },
   sourceHelp: { color: colors.muted, fontSize: 13, lineHeight: 20, textAlign: "right" },
-  sourcePanel: { backgroundColor: "#10192E", borderColor: colors.border, borderRadius: 18, borderWidth: 1, marginTop: 17, padding: 15 },
+  sourcePanel: { backgroundColor: "#10192E", borderColor: "#2F4265", borderRadius: 20, borderWidth: 1, marginTop: 17, padding: 16 },
   sourceTab: { alignItems: "center", flex: 1, gap: 5, justifyContent: "center", minHeight: 65, paddingHorizontal: 5 },
   sourceTabActive: { backgroundColor: colors.cyan, borderRadius: 14 },
   sourceTabText: { color: colors.muted, fontSize: 10, fontWeight: "800", textAlign: "center" },

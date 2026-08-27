@@ -4,11 +4,15 @@ import worker from "../cloudflare/src/index.mjs";
 type RoomRow = { code: string; name: string; hostParticipantId: string; passwordHash: string | null; passwordSalt: string | null };
 type MemberRow = { roomCode: string; participantId: string; displayName: string; role: "host" | "moderator" | "member"; permissions: string };
 type MessageRow = { id: string; roomCode: string; authorId: string; authorName: string; text: string; createdAt: string; deletedAt: string | null; deletedBy: string | null };
+type SettingsRow = { visibility: "public" | "private"; settings: string };
+type ModerationRow = { muted: number; cameraBlocked: number; kickedAt: string | null };
 
 class FakeRoomsDatabase {
   private rooms = new Map<string, RoomRow>();
   private members = new Map<string, MemberRow>();
   private messages = new Map<string, MessageRow>();
+  private settings = new Map<string, SettingsRow>();
+  private moderation = new Map<string, ModerationRow>();
   private key(roomCode: string, participantId: string) { return `${roomCode}:${participantId}`; }
 
   prepare(query: string) {
@@ -21,6 +25,9 @@ class FakeRoomsDatabase {
           const [code, name, hostParticipantId, passwordHash, passwordSalt] = parameters as [string, string, string, string | null, string | null];
           if (database.rooms.has(code)) throw new Error("UNIQUE constraint failed");
           database.rooms.set(code, { code, name, hostParticipantId, passwordHash, passwordSalt });
+        } else if (query.startsWith("INSERT OR REPLACE INTO room_settings")) {
+          const [roomCode, visibility, settings] = parameters as [string, SettingsRow["visibility"], string];
+          database.settings.set(roomCode, { visibility, settings });
         } else if (query.startsWith("INSERT OR IGNORE INTO room_members")) {
           const [roomCode, participantId, displayName, role, permissions] = parameters as [string, string, string, MemberRow["role"], string];
           const key = database.key(roomCode, participantId);
@@ -33,6 +40,26 @@ class FakeRoomsDatabase {
           const [role, permissions, roomCode, participantId] = parameters as [MemberRow["role"], string, string, string];
           const member = database.members.get(database.key(roomCode, participantId));
           if (member) { member.role = role; member.permissions = permissions; }
+        } else if (query.startsWith("UPDATE watch_rooms SET password_hash")) {
+          const [passwordHash, passwordSalt, roomCode] = parameters as [string | null, string | null, string];
+          const room = database.rooms.get(roomCode);
+          if (room) { room.passwordHash = passwordHash; room.passwordSalt = passwordSalt; }
+        } else if (query.startsWith("INSERT OR IGNORE INTO room_member_moderation")) {
+          const [roomCode, participantId] = parameters as [string, string];
+          const key = database.key(roomCode, participantId);
+          if (!database.moderation.has(key)) database.moderation.set(key, { muted: 0, cameraBlocked: 0, kickedAt: null });
+        } else if (query.startsWith("UPDATE room_member_moderation SET kicked_at")) {
+          const [roomCode, participantId] = parameters as [string, string];
+          const row = database.moderation.get(database.key(roomCode, participantId));
+          if (row) row.kickedAt = new Date().toISOString();
+        } else if (query.startsWith("UPDATE room_member_moderation SET muted")) {
+          const [muted, roomCode, participantId] = parameters as [number, string, string];
+          const row = database.moderation.get(database.key(roomCode, participantId));
+          if (row) row.muted = muted;
+        } else if (query.startsWith("UPDATE room_member_moderation SET camera_blocked")) {
+          const [cameraBlocked, roomCode, participantId] = parameters as [number, string, string];
+          const row = database.moderation.get(database.key(roomCode, participantId));
+          if (row) row.cameraBlocked = cameraBlocked;
         } else if (query.startsWith("INSERT OR IGNORE INTO room_messages")) {
           const [id, roomCode, authorId, authorName, text] = parameters as [string, string, string, string, string];
           if (!database.messages.has(id)) database.messages.set(id, { id, roomCode, authorId, authorName, text, createdAt: new Date().toISOString(), deletedAt: null, deletedBy: null });
@@ -45,7 +72,11 @@ class FakeRoomsDatabase {
       },
       async first() {
         if (query.includes("FROM watch_rooms")) return database.rooms.get(parameters[0] as string) ?? null;
-        if (query.includes("FROM room_members")) return database.members.get(database.key(parameters[0] as string, parameters[1] as string)) ?? null;
+        if (query.includes("FROM room_settings")) return database.settings.get(parameters[0] as string) ?? null;
+        if (query.includes("FROM room_members")) {
+          const member = database.members.get(database.key(parameters[0] as string, parameters[1] as string));
+          return member ? { ...member, ...(database.moderation.get(database.key(member.roomCode, member.participantId)) ?? { muted: 0, cameraBlocked: 0, kickedAt: null }) } : null;
+        }
         if (query.includes("FROM room_messages")) {
           const message = database.messages.get(parameters[0] as string);
           if (!message || message.roomCode !== parameters[1] || message.deletedAt) return null;
@@ -54,7 +85,7 @@ class FakeRoomsDatabase {
         throw new Error(`Unsupported D1 statement: ${query}`);
       },
       async all() {
-        if (query.includes("FROM room_members")) return { results: [...database.members.values()].filter((member) => member.roomCode === parameters[0]) };
+        if (query.includes("FROM room_members")) return { results: [...database.members.values()].filter((member) => member.roomCode === parameters[0]).map((member) => ({ ...member, ...(database.moderation.get(database.key(member.roomCode, member.participantId)) ?? { muted: 0, cameraBlocked: 0, kickedAt: null }) })) };
         if (query.includes("FROM room_messages")) return { results: [...database.messages.values()].filter((message) => message.roomCode === parameters[0] && !message.deletedAt) };
         throw new Error(`Unsupported D1 statement: ${query}`);
       },
@@ -100,5 +131,20 @@ describe("Cloudflare room Worker", () => {
 
     const remove = await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/messages/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomCode: created.code, accessToken: joined.accessToken, id: "message_12345678" }) }), environment);
     expect(remove.status).toBe(200);
+  });
+
+  it("enforces mute and kick actions in the room state", async () => {
+    const environment = env();
+    const created = await (await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "إدارة الأعضاء", password: "", visibility: "public", participantId: "host_99112233", displayName: "المضيف" }) }), environment)).json() as { code: string; accessToken: string };
+    const joined = await (await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: created.code, password: "", participantId: "guest_9911223", displayName: "عضو" }) }), environment)).json() as { accessToken: string };
+
+    const mute = await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/members/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomCode: created.code, accessToken: created.accessToken, targetParticipantId: "guest_9911223", action: "mute" }) }), environment);
+    expect(mute.status).toBe(200);
+    expect((await mute.json()) as { member: { muted: boolean } }).toMatchObject({ member: { muted: true } });
+
+    const kick = await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/members/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomCode: created.code, accessToken: created.accessToken, targetParticipantId: "guest_9911223", action: "kick" }) }), environment);
+    expect(kick.status).toBe(200);
+    const denied = await worker.fetch(new Request(`https://api.ahmed1986y.com/v1/rooms/${created.code}/state`, { headers: { Authorization: `Bearer ${joined.accessToken}` } }), environment);
+    expect(denied.status).toBe(401);
   });
 });

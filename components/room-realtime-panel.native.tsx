@@ -2,85 +2,44 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { AndroidAudioTypePresets, AudioSession, isTrackReference, LiveKitRoom, useRoomContext, useTracks, VideoTrack } from "@livekit/react-native";
 import { DataPacket_Kind, RoomEvent, Track } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { deleteRoomMessage, getRoomState, postRoomMessage, updateRoomMemberPermissions, type RoomChatMessage, type RoomMember, type RoomPermission, type RoomRole } from "@/lib/room-api";
+import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { deleteRoomMessage, getRoomState, performRoomMemberAction, postRoomMessage, updateRoomMemberPermissions, type RoomChatMessage, type RoomMember, type RoomMemberAction, type RoomPermission, type RoomRole } from "@/lib/room-api";
 import { ensureLiveKitGlobals } from "@/lib/livekit-setup";
 
 export type RealtimeRoomCredentials = { code: string; serverUrl: string; token: string };
-
 type ChatMessage = RoomChatMessage & { mine: boolean };
 type ActivePane = "chat" | "camera" | "members" | null;
 
-const palette = {
-  cyan: "#4EA9FF",
-  muted: "#93A2C4",
-  panel: "#111A2D",
-  primary: "#8B5CF6",
-  success: "#48D8A3",
-  text: "#F8F8FF",
-};
+const palette = { cyan: "#8E65FF", muted: "#98A4C0", panel: "#10182A", text: "#F8F8FF" };
+const permissionLabels: Record<RoomPermission, string> = { control_source: "تغيير المصدر", control_playback: "التحكم بالفيديو", search_youtube: "بحث YouTube", moderate_chat: "إدارة الدردشة", manage_members: "إدارة الأعضاء" };
 
-const permissionLabels: Record<RoomPermission, string> = {
-  control_source: "المصدر",
-  control_playback: "التشغيل",
-  moderate_chat: "الدردشة",
-};
-
-export function RoomRealtimePanel({
-  accessToken,
-  credentials,
-  onSelfAccessChange,
-  participantId,
-  permissions,
-  role,
-}: {
+export function RoomRealtimePanel({ accessToken, callVolume, credentials, onSelfAccessChange, onCallVolumeChange, participantId, permissions, role }: {
   accessToken: string;
+  callVolume: number;
   credentials: RealtimeRoomCredentials;
   onSelfAccessChange: (access: { role: RoomRole; permissions: RoomPermission[] }) => void;
+  onCallVolumeChange: (volume: number) => void;
   participantId: string;
   permissions: RoomPermission[];
   role: RoomRole;
 }) {
   ensureLiveKitGlobals();
   const [audioConfigured, setAudioConfigured] = useState(false);
-
   useEffect(() => {
     let active = true;
-    void AudioSession.configureAudio({
-      android: {
-        preferredOutputList: ["bluetooth", "headset", "speaker", "earpiece"],
-        audioTypeOptions: {
-          ...AndroidAudioTypePresets.communication,
-          manageAudioFocus: false,
-          audioFocusMode: "gainTransientMayDuck",
-        },
-      },
-    }).catch(() => undefined).finally(() => active && setAudioConfigured(true));
+    void AudioSession.configureAudio({ android: { preferredOutputList: ["bluetooth", "headset", "speaker", "earpiece"], audioTypeOptions: { ...AndroidAudioTypePresets.communication, manageAudioFocus: false, audioFocusMode: "gainTransientMayDuck" } } }).catch(() => undefined).finally(() => active && setAudioConfigured(true));
     return () => { active = false; };
   }, []);
-
-  if (!credentials.serverUrl || !credentials.token) {
-    return <View style={styles.unavailable}><MaterialIcons color={palette.cyan} name="cloud-sync" size={20} /><Text style={styles.unavailableText}>يتم تجهيز قناة التواصل الآمن للغرفة. أعد فتح الغرفة بعد اكتمال مزامنة الخادم.</Text></View>;
-  }
+  if (!credentials.serverUrl || !credentials.token) return <View style={styles.unavailable}><MaterialIcons color={palette.cyan} name="cloud-sync" size={20} /><Text style={styles.unavailableText}>يتم تجهيز قناة التواصل الآمن للغرفة.</Text></View>;
   if (!audioConfigured) return <View style={styles.compactLoading}><MaterialIcons color={palette.cyan} name="sync" size={18} /></View>;
-
-  return (
-    <LiveKitRoom audio={false} connect serverUrl={credentials.serverUrl} token={credentials.token} video={false}>
-      <RealtimeControls accessToken={accessToken} code={credentials.code} onSelfAccessChange={onSelfAccessChange} participantId={participantId} permissions={permissions} role={role} />
-    </LiveKitRoom>
-  );
+  return <LiveKitRoom audio={false} connect serverUrl={credentials.serverUrl} token={credentials.token} video={false}><RealtimeControls accessToken={accessToken} callVolume={callVolume} code={credentials.code} onCallVolumeChange={onCallVolumeChange} onSelfAccessChange={onSelfAccessChange} participantId={participantId} permissions={permissions} role={role} /></LiveKitRoom>;
 }
 
-function RealtimeControls({
-  accessToken,
-  code,
-  onSelfAccessChange,
-  participantId,
-  permissions,
-  role,
-}: {
+function RealtimeControls({ accessToken, callVolume, code, onCallVolumeChange, onSelfAccessChange, participantId, permissions, role }: {
   accessToken: string;
+  callVolume: number;
   code: string;
+  onCallVolumeChange: (volume: number) => void;
   onSelfAccessChange: (access: { role: RoomRole; permissions: RoomPermission[] }) => void;
   participantId: string;
   permissions: RoomPermission[];
@@ -91,284 +50,145 @@ function RealtimeControls({
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [draft, setDraft] = useState("");
-  const [connected, setConnected] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [callOn, setCallOn] = useState(false);
   const [talking, setTalking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [selfModeration, setSelfModeration] = useState<Pick<RoomMember, "muted" | "cameraBlocked">>({ muted: false, cameraBlocked: false });
+  const [selectedMember, setSelectedMember] = useState<RoomMember | null>(null);
   const pendingPress = useRef(false);
   const cameraTracks = useTracks([Track.Source.Camera]);
   const canModerate = permissions.includes("moderate_chat");
+  const canManageMembers = role === "host" || permissions.includes("manage_members");
 
   const hydrateRoom = useCallback(async () => {
     if (!accessToken) return;
     const state = await getRoomState({ code, accessToken });
     setMembers(state.members);
+    setSelfModeration({ muted: state.member.muted, cameraBlocked: state.member.cameraBlocked });
     setChat(state.messages.map((message) => ({ ...message, mine: message.authorId === participantId })));
     onSelfAccessChange({ role: state.role, permissions: state.permissions });
   }, [accessToken, code, onSelfAccessChange, participantId]);
 
   useEffect(() => {
-    let mounted = true;
-    void hydrateRoom().catch(() => mounted && undefined);
-    const refresh = setInterval(() => void hydrateRoom().catch(() => undefined), 20_000);
-    return () => { mounted = false; clearInterval(refresh); };
+    void hydrateRoom().catch(() => undefined);
+    const refresh = setInterval(() => void hydrateRoom().catch(() => undefined), 15_000);
+    return () => clearInterval(refresh);
   }, [hydrateRoom]);
+
+  useEffect(() => {
+    room.remoteParticipants.forEach((participant) => participant.setVolume(Math.max(0, Math.min(1, callVolume))));
+  }, [callVolume, room, room.remoteParticipants.size]);
 
   useEffect(() => {
     const onData = (payload: Uint8Array, participant?: { name?: string; identity?: string }, kind?: DataPacket_Kind) => {
       if (kind !== DataPacket_Kind.RELIABLE) return;
       try {
         const packet = JSON.parse(new TextDecoder().decode(payload)) as { kind?: string; id?: string; text?: string; authorId?: string; authorName?: string; createdAt?: string };
-        if (packet.kind === "ah4-chat-delete" && packet.id) {
-          setChat((current) => current.filter((message) => message.id !== packet.id));
-          return;
-        }
-        const messageId = packet.id;
-        const messageText = packet.text?.trim();
-        if (packet.kind !== "ah4-chat" || !messageId || !messageText) return;
+        if (packet.kind === "ah4-chat-delete" && packet.id) { setChat((current) => current.filter((message) => message.id !== packet.id)); return; }
+        const id = packet.id; const text = packet.text?.trim();
+        if (packet.kind !== "ah4-chat" || !id || !text) return;
         const authorId = packet.authorId || participant?.identity || "member";
-        setChat((current) => current.some((message) => message.id === messageId) ? current : [...current, {
-          id: messageId,
-          authorId,
-          authorName: packet.authorName || participant?.name || participant?.identity || "عضو",
-          createdAt: packet.createdAt || new Date().toISOString(),
-          mine: authorId === participantId,
-          text: messageText,
-        }].slice(-60));
-      } catch {
-        // Ignore packets belonging to other realtime features.
-      }
+        setChat((current) => current.some((message) => message.id === id) ? current : [...current, { id, authorId, authorName: packet.authorName || participant?.name || participant?.identity || "عضو", createdAt: packet.createdAt || new Date().toISOString(), mine: authorId === participantId, text }].slice(-60));
+      } catch { /* Ignore non-chat LiveKit data. */ }
     };
     room.on(RoomEvent.DataReceived, onData);
-    setConnected(true);
-    return () => {
-      room.off(RoomEvent.DataReceived, onData);
-      void room.localParticipant.setCameraEnabled(false);
-      void room.localParticipant.setMicrophoneEnabled(false);
-      void AudioSession.stopAudioSession().catch(() => undefined);
-    };
+    return () => { room.off(RoomEvent.DataReceived, onData); void room.localParticipant.setCameraEnabled(false); void room.localParticipant.setMicrophoneEnabled(false); void AudioSession.stopAudioSession().catch(() => undefined); };
   }, [participantId, room]);
 
-  const liveParticipantCount = useMemo(() => room.remoteParticipants.size + 1, [room.remoteParticipants.size]);
-  const memberCount = Math.max(liveParticipantCount, members.length || 1);
+  useEffect(() => {
+    if (selfModeration.muted) { setCallOn(false); setTalking(false); void room.localParticipant.setMicrophoneEnabled(false); }
+    if (selfModeration.cameraBlocked) { setCameraOn(false); void room.localParticipant.setCameraEnabled(false); }
+  }, [room, selfModeration.cameraBlocked, selfModeration.muted]);
 
-  const setOpenCall = async () => {
-    if (busy) return;
-    try {
-      setBusy(true);
-      const next = !callOn;
-      if (next) await AudioSession.startAudioSession();
-      await room.localParticipant.setMicrophoneEnabled(next);
-      setCallOn(next);
-      if (next) setTalking(false);
-      if (!next) await AudioSession.stopAudioSession();
-    } catch {
-      Alert.alert("تعذر تشغيل الاتصال", "تحقق من إذن الميكروفون واتصالك بالإنترنت ثم حاول مرة أخرى.");
-    } finally {
-      setBusy(false);
-    }
+  const memberCount = useMemo(() => Math.max(room.remoteParticipants.size + 1, members.length || 1), [members.length, room.remoteParticipants.size]);
+  const openCall = async () => {
+    if (busy || selfModeration.muted) { if (selfModeration.muted) Alert.alert("تم إسكاتك", "لا يمكنك بدء الاتصال حتى يزيل المضيف أو المشرف الإسكات."); return; }
+    try { setBusy(true); const next = !callOn; if (next) await AudioSession.startAudioSession(); await room.localParticipant.setMicrophoneEnabled(next); setCallOn(next); if (next) setTalking(false); if (!next) await AudioSession.stopAudioSession(); } catch { Alert.alert("تعذر تشغيل الاتصال", "تحقق من إذن الميكروفون واتصالك بالإنترنت ثم حاول مرة أخرى."); } finally { setBusy(false); }
   };
-
-  const setCamera = async () => {
-    if (busy) return;
-    try {
-      setBusy(true);
-      const next = !cameraOn;
-      await room.localParticipant.setCameraEnabled(next);
-      setCameraOn(next);
-      setActivePane(next ? "camera" : "chat");
-    } catch {
-      Alert.alert("تعذر تشغيل الكاميرا", "تحقق من إذن الكاميرا ثم حاول مرة أخرى.");
-    } finally {
-      setBusy(false);
-    }
+  const toggleCamera = async () => {
+    if (busy || selfModeration.cameraBlocked) { if (selfModeration.cameraBlocked) Alert.alert("الكاميرا محظورة", "لا يمكنك تشغيل الكاميرا حتى يزيل المضيف أو المشرف الحظر."); return; }
+    try { setBusy(true); const next = !cameraOn; await room.localParticipant.setCameraEnabled(next); setCameraOn(next); setActivePane(next ? "camera" : "chat"); } catch { Alert.alert("تعذر تشغيل الكاميرا", "تحقق من إذن الكاميرا ثم حاول مرة أخرى."); } finally { setBusy(false); }
   };
-
   const startTalking = async () => {
-    if (busy || callOn || pendingPress.current) return;
+    if (busy || callOn || selfModeration.muted || pendingPress.current) return;
     pendingPress.current = true;
-    try {
-      await AudioSession.startAudioSession();
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setTalking(true);
-    } catch {
-      Alert.alert("تعذر تشغيل الهوكي توكي", "تحقق من إذن الميكروفون ثم اضغط مطولاً مرة أخرى.");
-    } finally {
-      pendingPress.current = false;
-    }
+    try { await AudioSession.startAudioSession(); await room.localParticipant.setMicrophoneEnabled(true); setTalking(true); } catch { Alert.alert("تعذر تشغيل الهوكي توكي", "تحقق من إذن الميكروفون ثم اضغط مطولًا مرة أخرى."); } finally { pendingPress.current = false; }
   };
-
-  const stopTalking = async () => {
-    if (callOn || !talking) return;
-    try {
-      await room.localParticipant.setMicrophoneEnabled(false);
-      await AudioSession.stopAudioSession();
-    } finally {
-      setTalking(false);
-    }
-  };
-
+  const stopTalking = async () => { if (callOn || !talking) return; try { await room.localParticipant.setMicrophoneEnabled(false); await AudioSession.stopAudioSession(); } finally { setTalking(false); } };
   const sendChat = async () => {
-    const text = draft.trim();
-    if (!text || !accessToken) return;
+    const text = draft.trim(); if (!text || !accessToken) return;
     const id = `message_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    try {
-      const { message } = await postRoomMessage({ roomCode: code, accessToken, id, text });
-      const outgoing: ChatMessage = { ...message, mine: true };
-      setDraft("");
-      setChat((current) => current.some((item) => item.id === id) ? current : [...current, outgoing].slice(-60));
-      await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ kind: "ah4-chat", ...message })), { reliable: true, topic: "ah4-chat" });
-    } catch (error) {
-      Alert.alert("تعذر إرسال الرسالة", error instanceof Error ? error.message : "حاول مرة أخرى.");
-    }
+    try { const { message } = await postRoomMessage({ roomCode: code, accessToken, id, text }); setDraft(""); setChat((current) => current.some((item) => item.id === id) ? current : [...current, { ...message, mine: true }].slice(-60)); await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ kind: "ah4-chat", ...message })), { reliable: true, topic: "ah4-chat" }); } catch (error) { Alert.alert("تعذر إرسال الرسالة", error instanceof Error ? error.message : "حاول مرة أخرى."); }
   };
-
   const removeChat = async (message: ChatMessage) => {
     if (!accessToken || (!message.mine && !canModerate)) return;
-    try {
-      await deleteRoomMessage({ roomCode: code, accessToken, id: message.id });
-      setChat((current) => current.filter((item) => item.id !== message.id));
-      await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ kind: "ah4-chat-delete", id: message.id })), { reliable: true, topic: "ah4-chat" });
-    } catch (error) {
-      Alert.alert("تعذر حذف الرسالة", error instanceof Error ? error.message : "حاول مرة أخرى.");
-    }
+    try { await deleteRoomMessage({ roomCode: code, accessToken, id: message.id }); setChat((current) => current.filter((item) => item.id !== message.id)); await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ kind: "ah4-chat-delete", id: message.id })), { reliable: true, topic: "ah4-chat" }); } catch (error) { Alert.alert("تعذر حذف الرسالة", error instanceof Error ? error.message : "حاول مرة أخرى."); }
   };
-
-  const setMemberAccess = async (member: RoomMember, nextRole: Exclude<RoomRole, "host">, nextPermissions: RoomPermission[]) => {
+  const saveMemberAccess = async (member: RoomMember, nextRole: Exclude<RoomRole, "host">, nextPermissions: RoomPermission[]) => {
     if (role !== "host" || member.role === "host") return;
-    try {
-      const { member: updated } = await updateRoomMemberPermissions({ roomCode: code, accessToken, targetParticipantId: member.participantId, role: nextRole, permissions: nextPermissions });
-      setMembers((current) => current.map((item) => item.participantId === updated.participantId ? updated : item));
-    } catch (error) {
-      Alert.alert("تعذر حفظ الصلاحية", error instanceof Error ? error.message : "حاول مرة أخرى.");
-    }
+    try { const { member: updated } = await updateRoomMemberPermissions({ roomCode: code, accessToken, targetParticipantId: member.participantId, role: nextRole, permissions: nextPermissions }); setMembers((current) => current.map((item) => item.participantId === updated.participantId ? updated : item)); setSelectedMember(updated); } catch (error) { Alert.alert("تعذر حفظ الصلاحية", error instanceof Error ? error.message : "حاول مرة أخرى."); }
+  };
+  const applyMemberAction = async (member: RoomMember, action: RoomMemberAction) => {
+    try { const { member: updated } = await performRoomMemberAction({ roomCode: code, accessToken, targetParticipantId: member.participantId, action }); if (action === "kick") { setMembers((current) => current.filter((item) => item.participantId !== member.participantId)); setSelectedMember(null); } else { setMembers((current) => current.map((item) => item.participantId === updated.participantId ? updated : item)); setSelectedMember(updated); } } catch (error) { Alert.alert("تعذر تنفيذ الإجراء", error instanceof Error ? error.message : "حاول مرة أخرى."); }
   };
 
-  return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.panel}>
-      <View style={styles.toolsRow}>
-        <Pressable accessibilityLabel="إدارة أعضاء الغرفة" accessibilityRole="button" onPress={() => setActivePane(activePane === "members" ? "chat" : "members")} style={({ pressed }) => [styles.membersTool, activePane === "members" && styles.toolActive, pressed && styles.toolPressed]}>
-          <MaterialIcons color="#C7D4F2" name="group" size={20} />
-          <View style={[styles.connectionDot, connected && styles.connectionDotLive]} />
-          <View style={styles.membersBadge}><Text style={styles.membersBadgeText}>{memberCount}</Text></View>
-        </Pressable>
-        <Tool active={cameraOn} icon={cameraOn ? "videocam" : "videocam-off"} label="الكاميرا" tone="camera" onPress={() => void setCamera()} />
-        <Pressable accessibilityLabel="هوكي توكي، اضغط مطولًا للتحدث" accessibilityRole="button" onPressIn={() => void startTalking()} onPressOut={() => void stopTalking()} style={({ pressed }) => [styles.talkTool, talking && styles.talkToolLive, pressed && styles.toolPressed]}>
-          <MaterialIcons color={talking ? "#FFFFFF" : "#8EF7D9"} name="keyboard-voice" size={21} />
-        </Pressable>
-        <Tool active={false} icon="auto-awesome" label="مزامنة المشاهدة" tone="sync" onPress={() => Alert.alert("المزامنة مفعّلة", "يتابع التطبيق المصدر والتشغيل ويصحح فرق الوقت عند الحاجة.")} />
-        <Tool active={callOn} icon={callOn ? "call-end" : "phone-in-talk"} label={callOn ? "إنهاء الاتصال" : "اتصال صوتي"} tone="call" onPress={() => void setOpenCall()} />
-        <Tool active={activePane === "chat"} icon="chat-bubble-outline" label="الدردشة" tone="chat" onPress={() => setActivePane(activePane === "chat" ? null : "chat")} />
-      </View>
-
-      {activePane === "chat" ? <View style={styles.chatPane}>
-        <FlatList
-          contentContainerStyle={chat.length ? styles.messagesContent : styles.messagesEmpty}
-          data={chat}
-          keyExtractor={(message) => message.id}
-          renderItem={({ item }) => <ChatRow canDelete={item.mine || canModerate} message={item} onDelete={() => void removeChat(item)} />}
-          showsVerticalScrollIndicator={false}
-          style={styles.messages}
-        />
-        <View style={styles.composer}>
-          <Pressable accessibilityLabel="إرسال الرسالة" accessibilityRole="button" onPress={() => void sendChat()} style={({ pressed }) => [styles.send, pressed && styles.toolPressed]}><MaterialIcons color="#C6DAFF" name="send" size={20} /></Pressable>
-          <TextInput maxLength={800} onChangeText={setDraft} placeholder="اكتب رسالة…" placeholderTextColor="#7383AA" returnKeyType="send" style={styles.chatInput} textAlign="right" value={draft} onSubmitEditing={() => void sendChat()} />
-        </View>
-      </View> : null}
-
-      {activePane === "camera" ? <View style={styles.cameraPane}><View style={styles.cameraGrid}>{cameraTracks.slice(0, 4).map((track, index) => isTrackReference(track) ? <VideoTrack key={track.publication.trackSid} style={styles.videoTrack} trackRef={track} /> : <View key={`placeholder-${index}`} style={styles.videoPlaceholder} />)}</View></View> : null}
-
-      {activePane === "members" ? <MemberPanel currentRole={role} members={members} onChange={setMemberAccess} /> : null}
-    </KeyboardAvoidingView>
-  );
+  return <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.panel}>
+    <View style={styles.toolsRow}>
+      <Tool active={activePane === "chat"} icon="chat-bubble-outline" label="الدردشة" tone="chat" onPress={() => setActivePane("chat")} />
+      <Tool active={callOn} disabled={selfModeration.muted} icon={callOn ? "call-end" : "mic-none"} label="اتصال صوتي" tone="call" onPress={() => void openCall()} />
+      <Tool active={cameraOn} disabled={selfModeration.cameraBlocked} icon={cameraOn ? "videocam" : "videocam-off"} label="اتصال كاميرا" tone="camera" onPress={() => void toggleCamera()} />
+      <Pressable accessibilityLabel="هوكي توكي، اضغط مطولًا للتحدث" accessibilityRole="button" disabled={selfModeration.muted} onPressIn={() => void startTalking()} onPressOut={() => void stopTalking()} style={({ pressed }) => [styles.tool, styles.toolTalk, talking && styles.toolTalkLive, selfModeration.muted && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color="#C9FCEB" name="radio" size={27} /><Text style={styles.toolLabel}>هوكي توكي</Text></Pressable>
+      <Tool active={activePane === "members"} icon="groups-2" label={`الموجودون (${memberCount})`} tone="members" onPress={() => setActivePane("members")} />
+    </View>
+    {activePane === "chat" ? <View style={styles.chatPane}><View style={styles.chatHeader}><Text style={styles.chatHeaderTitle}>الدردشة العامة</Text><MaterialIcons color="#C5CDE3" name="keyboard-arrow-down" size={22} /></View><FlatList contentContainerStyle={chat.length ? styles.messagesContent : styles.messagesEmpty} data={chat} keyExtractor={(message) => message.id} renderItem={({ item }) => <ChatRow canDelete={item.mine || canModerate} message={item} onDelete={() => void removeChat(item)} />} showsVerticalScrollIndicator={false} style={styles.messages} /><View style={styles.composer}><Pressable accessibilityLabel="إرسال الرسالة" accessibilityRole="button" onPress={() => void sendChat()} style={({ pressed }) => [styles.send, pressed && styles.toolPressed]}><MaterialIcons color="#FFFFFF" name="send" size={25} /></Pressable><TextInput maxLength={800} onChangeText={setDraft} onSubmitEditing={() => void sendChat()} placeholder="اكتب رسالتك…" placeholderTextColor="#7383AA" returnKeyType="send" style={styles.chatInput} textAlign="right" value={draft} /><MaterialIcons color="#A4B0CC" name="sentiment-satisfied-alt" size={25} /></View></View> : null}
+    {activePane === "camera" ? <View style={styles.cameraPane}><View style={styles.cameraGrid}>{cameraTracks.slice(0, 4).map((track, index) => isTrackReference(track) ? <VideoTrack key={track.publication.trackSid} style={styles.videoTrack} trackRef={track} /> : <View key={`placeholder-${index}`} style={styles.videoPlaceholder} />)}</View></View> : null}
+    {activePane === "members" ? <MemberPanel canManage={canManageMembers} currentRole={role} members={members} onSelect={setSelectedMember} /> : null}
+    {selectedMember ? <MemberActionSheet callVolume={callVolume} member={selectedMember} onCallVolumeChange={onCallVolumeChange} onClose={() => setSelectedMember(null)} onMemberAction={applyMemberAction} onSaveAccess={saveMemberAccess} viewerRole={role} /> : null}
+  </KeyboardAvoidingView>;
 }
 
-function Tool({ active, icon, label, tone, onPress }: { active: boolean; icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string; tone: "camera" | "call" | "chat" | "sync"; onPress: () => void }) {
-  const toneStyle = tone === "camera" ? styles.toolCamera : tone === "call" ? styles.toolCall : tone === "sync" ? styles.toolSync : styles.toolChat;
-  return <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.tool, toneStyle, active && styles.toolActive, active && tone === "call" && styles.toolCallActive, active && tone === "chat" && styles.toolChatActive, pressed && styles.toolPressed]}><MaterialIcons color={active ? "#FFFFFF" : "#C8D1EC"} name={icon} size={20} /></Pressable>;
+function Tool({ active, disabled = false, icon, label, tone, onPress }: { active: boolean; disabled?: boolean; icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string; tone: "camera" | "call" | "chat" | "members"; onPress: () => void }) {
+  const toneStyle = tone === "camera" ? styles.toolCamera : tone === "call" ? styles.toolCall : tone === "members" ? styles.toolMembers : styles.toolChat;
+  return <Pressable accessibilityLabel={label} accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.tool, toneStyle, active && styles.toolActive, disabled && styles.toolDisabled, pressed && styles.toolPressed]}><MaterialIcons color={active ? "#FFFFFF" : "#D9DFF1"} name={icon} size={27} /><Text style={styles.toolLabel}>{label}</Text></Pressable>;
 }
 
 function ChatRow({ canDelete, message, onDelete }: { canDelete: boolean; message: ChatMessage; onDelete: () => void }) {
-  const initial = message.authorName.trim().slice(0, 1).toLocaleUpperCase("ar") || "؟";
-  return <View style={[styles.messageRow, message.mine && styles.messageRowMine]}>
-    <View style={[styles.avatar, message.mine && styles.avatarMine]}><Text style={styles.avatarText}>{initial}</Text></View>
-    <View style={[styles.messageBody, message.mine && styles.messageBodyMine]}><View style={styles.messageMeta}><Text style={styles.messageSender}>{message.authorName}</Text>{canDelete ? <Pressable accessibilityLabel="حذف الرسالة" accessibilityRole="button" onPress={onDelete} style={({ pressed }) => [styles.deleteMessage, pressed && styles.toolPressed]}><MaterialIcons color="#A7B6D9" name="delete-outline" size={15} /></Pressable> : null}</View><Text style={styles.messageText}>{message.text}</Text></View>
-  </View>;
+  return <View style={styles.messageRow}><View style={[styles.avatar, message.mine && styles.avatarMine]}><Text style={styles.avatarText}>{message.authorName.trim().slice(0, 1).toLocaleUpperCase("ar") || "؟"}</Text></View><View style={[styles.messageBody, message.mine && styles.messageBodyMine]}><View style={styles.messageMeta}><Text style={styles.messageSender}>{message.authorName}</Text>{canDelete ? <Pressable accessibilityLabel="حذف الرسالة" onPress={onDelete}><MaterialIcons color="#A7B6D9" name="delete-outline" size={16} /></Pressable> : null}</View><Text style={styles.messageText}>{message.text}</Text></View></View>;
 }
 
-function MemberPanel({ currentRole, members, onChange }: { currentRole: RoomRole; members: RoomMember[]; onChange: (member: RoomMember, role: Exclude<RoomRole, "host">, permissions: RoomPermission[]) => void }) {
-  return <View style={styles.memberPane}>
-    <FlatList
-      data={members}
-      keyExtractor={(member) => member.participantId}
-      renderItem={({ item }) => <View style={styles.memberRow}>
-        <View style={styles.memberAvatar}><Text style={styles.avatarText}>{item.displayName.slice(0, 1).toLocaleUpperCase("ar")}</Text></View>
-        <View style={styles.memberInfo}><Text style={styles.memberName}>{item.displayName}</Text><Text style={styles.memberRole}>{item.role === "host" ? "المضيف" : item.role === "moderator" ? "مشرف" : "عضو"}</Text></View>
-        {currentRole === "host" && item.role !== "host" ? <View style={styles.memberActions}>
-          <Pressable accessibilityLabel={item.role === "moderator" ? "إلغاء الإشراف" : "تعيين مشرف"} onPress={() => onChange(item, item.role === "moderator" ? "member" : "moderator", item.role === "moderator" ? [] : item.permissions)} style={({ pressed }) => [styles.memberAction, item.role === "moderator" && styles.memberActionActive, pressed && styles.toolPressed]}><MaterialIcons color="#FFFFFF" name={item.role === "moderator" ? "verified-user" : "admin-panel-settings"} size={17} /></Pressable>
-          {(["control_source", "control_playback", "moderate_chat"] as RoomPermission[]).map((permission) => <Pressable accessibilityLabel={`تبديل صلاحية ${permissionLabels[permission]}`} key={permission} onPress={() => onChange(item, item.role === "moderator" ? "moderator" : "member", item.permissions.includes(permission) ? item.permissions.filter((value) => value !== permission) : [...item.permissions, permission])} style={({ pressed }) => [styles.permissionDot, item.permissions.includes(permission) && styles.permissionDotActive, pressed && styles.toolPressed]}><Text style={styles.permissionDotText}>{permissionLabels[permission].slice(0, 1)}</Text></Pressable>)}
-        </View> : null}
-      </View>}
-      ListEmptyComponent={<Text style={styles.memberRole}>لا يوجد أعضاء ظاهرون بعد.</Text>}
-    />
-  </View>;
+function MemberPanel({ canManage, currentRole, members, onSelect }: { canManage: boolean; currentRole: RoomRole; members: RoomMember[]; onSelect: (member: RoomMember) => void }) {
+  return <View style={styles.memberPane}><FlatList data={members} keyExtractor={(member) => member.participantId} ListEmptyComponent={<Text style={styles.memberRole}>لا يوجد أعضاء ظاهرون بعد.</Text>} renderItem={({ item }) => <Pressable disabled={!canManage || item.role === "host" || (currentRole !== "host" && item.role !== "member")} onPress={() => onSelect(item)} style={({ pressed }) => [styles.memberRow, pressed && styles.toolPressed]}><View style={styles.memberAvatar}><Text style={styles.avatarText}>{item.displayName.slice(0, 1).toLocaleUpperCase("ar")}</Text></View><View style={styles.memberInfo}><Text style={styles.memberName}>{item.displayName}</Text><Text style={styles.memberRole}>{item.role === "host" ? "المضيف" : item.role === "moderator" ? "مشرف" : "عضو"}{item.muted ? " · مكتوم" : ""}{item.cameraBlocked ? " · الكاميرا محظورة" : ""}</Text></View><MaterialIcons color="#9D7AFF" name={item.role === "host" ? "workspace-premium" : "more-horiz"} size={22} /></Pressable>} /></View>;
+}
+
+function MemberActionSheet({ callVolume, member, onCallVolumeChange, onClose, onMemberAction, onSaveAccess, viewerRole }: { callVolume: number; member: RoomMember; onCallVolumeChange: (value: number) => void; onClose: () => void; onMemberAction: (member: RoomMember, action: RoomMemberAction) => void; onSaveAccess: (member: RoomMember, role: Exclude<RoomRole, "host">, permissions: RoomPermission[]) => void; viewerRole: RoomRole }) {
+  const canAssign = viewerRole === "host";
+  const currentPermissions = member.permissions;
+  return <View style={styles.memberActionSheet}><View style={styles.memberActionTop}><Pressable accessibilityLabel="إغلاق إجراءات العضو" onPress={onClose}><MaterialIcons color="#CBD5EB" name="close" size={22} /></Pressable><View style={styles.memberActionIdentity}><View style={styles.avatar}><Text style={styles.avatarText}>{member.displayName.slice(0, 1)}</Text></View><View><Text style={styles.memberActionName}>{member.displayName}</Text><Text style={styles.memberRole}>{member.role === "moderator" ? "مشرف" : "عضو"}</Text></View></View></View><ScrollView showsVerticalScrollIndicator={false}><Text style={styles.actionGroupTitle}>إدارة العضو</Text><View style={styles.actionGrid}>{canAssign ? <ActionButton icon={member.role === "moderator" ? "remove-moderator" : "admin-panel-settings"} label={member.role === "moderator" ? "إلغاء مشرف" : "تعيين مشرف"} onPress={() => onSaveAccess(member, member.role === "moderator" ? "member" : "moderator", member.role === "moderator" ? [] : currentPermissions)} /> : null}<ActionButton icon={member.muted ? "mic-none" : "mic-off"} label={member.muted ? "إلغاء الإسكات" : "إسكات"} onPress={() => onMemberAction(member, member.muted ? "unmute" : "mute")} /><ActionButton icon={member.cameraBlocked ? "videocam" : "videocam-off"} label={member.cameraBlocked ? "سماح بالكاميرا" : "حظر الكاميرا"} onPress={() => onMemberAction(member, member.cameraBlocked ? "allow_camera" : "block_camera")} /><ActionButton danger icon="person-remove" label="طرد من الغرفة" onPress={() => Alert.alert("طرد العضو", `هل تريد طرد ${member.displayName} من الغرفة؟`, [{ text: "إلغاء", style: "cancel" }, { text: "طرد", style: "destructive", onPress: () => onMemberAction(member, "kick") }])} /></View>{canAssign ? <><Text style={styles.actionGroupTitle}>صلاحيات العضو</Text>{(["control_source", "search_youtube", "control_playback", "moderate_chat", "manage_members"] as RoomPermission[]).map((permission) => <Pressable key={permission} onPress={() => onSaveAccess(member, member.role === "moderator" ? "moderator" : "member", currentPermissions.includes(permission) ? currentPermissions.filter((value) => value !== permission) : [...currentPermissions, permission])} style={({ pressed }) => [styles.permissionRow, currentPermissions.includes(permission) && styles.permissionRowActive, pressed && styles.toolPressed]}><Text style={styles.permissionName}>{permissionLabels[permission]}</Text><MaterialIcons color={currentPermissions.includes(permission) ? "#B9A7FF" : "#7584A6"} name={currentPermissions.includes(permission) ? "check-circle" : "radio-button-unchecked"} size={21} /></Pressable>)}</> : null}<Text style={styles.actionGroupTitle}>صوت الاتصال</Text><LevelSelector value={callVolume} onChange={onCallVolumeChange} /></ScrollView></View>;
+}
+
+function ActionButton({ danger = false, icon, label, onPress }: { danger?: boolean; icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string; onPress: () => void }) {
+  return <Pressable accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.actionButton, danger && styles.actionButtonDanger, pressed && styles.toolPressed]}><MaterialIcons color={danger ? "#FF9D9A" : "#CDBEFF"} name={icon} size={21} /><Text style={[styles.actionButtonText, danger && styles.actionButtonDangerText]}>{label}</Text></Pressable>;
+}
+
+function LevelSelector({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  return <View style={styles.levelSelector}>{[0, 0.25, 0.5, 0.75, 1].map((level) => <Pressable accessibilityLabel={`مستوى الصوت ${Math.round(level * 100)}%`} key={level} onPress={() => onChange(level)} style={({ pressed }) => [styles.levelStep, level <= value && styles.levelStepActive, pressed && styles.toolPressed]} />)}</View>;
 }
 
 const styles = StyleSheet.create({
-  avatar: { alignItems: "center", backgroundColor: "#28517E", borderRadius: 18, height: 36, justifyContent: "center", marginTop: 2, width: 36 },
-  avatarMine: { backgroundColor: "#6846D6" },
-  avatarText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
-  cameraGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 8, minHeight: 118 },
-  cameraPane: { backgroundColor: "#101A2D", borderColor: "#284876", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 8, overflow: "hidden", padding: 8 },
-  chatInput: { backgroundColor: "#131D30", borderColor: "#31415D", borderRadius: 15, borderWidth: 1, color: palette.text, flex: 1, fontSize: 14, height: 42, paddingHorizontal: 13 },
-  chatPane: { backgroundColor: "#111A2D", borderColor: "#314B76", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 8, minHeight: 168, overflow: "hidden", paddingHorizontal: 9, paddingTop: 5 },
-  compactLoading: { alignItems: "center", height: 48, justifyContent: "center" },
-  composer: { alignItems: "center", borderTopColor: "#26364F", borderTopWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: -9, paddingHorizontal: 9, paddingVertical: 8 },
-  connectionDot: { backgroundColor: "#657493", borderColor: "#101828", borderRadius: 5, borderWidth: 1, bottom: 2, height: 9, position: "absolute", right: 3, width: 9 },
-  connectionDotLive: { backgroundColor: palette.success },
-  deleteMessage: { padding: 2 },
-  memberActions: { alignItems: "center", flexDirection: "row-reverse", gap: 4 },
-  memberAction: { alignItems: "center", backgroundColor: "#273551", borderColor: "#4A5E86", borderRadius: 9, borderWidth: 1, height: 31, justifyContent: "center", width: 31 },
-  memberActionActive: { backgroundColor: "#6841C4", borderColor: "#B49DFF" },
-  memberAvatar: { alignItems: "center", backgroundColor: "#254B76", borderRadius: 15, height: 30, justifyContent: "center", width: 30 },
-  memberInfo: { flex: 1, marginRight: 8 },
-  memberName: { color: palette.text, fontSize: 13, fontWeight: "800", textAlign: "right" },
-  memberPane: { backgroundColor: "#111A2D", borderColor: "#314B76", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 8, minHeight: 168, padding: 9 },
-  memberRole: { color: palette.muted, fontSize: 10, marginTop: 2, textAlign: "right" },
-  memberRow: { alignItems: "center", borderBottomColor: "#23314A", borderBottomWidth: 1, flexDirection: "row-reverse", minHeight: 54, paddingVertical: 7 },
-  membersBadge: { alignItems: "center", backgroundColor: "#00B77E", borderRadius: 12, height: 18, justifyContent: "center", position: "absolute", right: -4, top: -4, width: 18 },
-  membersBadgeText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900" },
-  membersTool: { alignItems: "center", backgroundColor: "#202A41", borderColor: "#45536E", borderRadius: 13, borderWidth: 1, height: 42, justifyContent: "center", width: 42 },
-  messageBody: { backgroundColor: "#182747", borderBottomLeftRadius: 13, borderBottomRightRadius: 13, borderTopLeftRadius: 13, flexShrink: 1, maxWidth: "82%", paddingHorizontal: 10, paddingVertical: 7 },
-  messageBodyMine: { backgroundColor: "#49319B" },
-  messageMeta: { alignItems: "center", flexDirection: "row-reverse", gap: 6, justifyContent: "space-between" },
-  messageRow: { alignItems: "flex-start", flexDirection: "row-reverse", gap: 7, marginBottom: 9, paddingHorizontal: 1 },
-  messageRowMine: { flexDirection: "row" },
-  messageSender: { color: "#86BFFF", fontSize: 11, fontWeight: "900", textAlign: "right" },
-  messageText: { color: palette.text, fontSize: 13, lineHeight: 19, marginTop: 2, textAlign: "right" },
-  messages: { flex: 1 },
-  messagesContent: { paddingBottom: 4, paddingTop: 8 },
-  messagesEmpty: { flexGrow: 1 },
-  panel: { backgroundColor: "transparent", flex: 1, marginHorizontal: 10, paddingTop: 8 },
-  permissionDot: { alignItems: "center", backgroundColor: "#1F2A43", borderColor: "#415274", borderRadius: 8, borderWidth: 1, height: 24, justifyContent: "center", width: 24 },
-  permissionDotActive: { backgroundColor: "#176C60", borderColor: "#4BDBBD" },
-  permissionDotText: { color: "#E5EBFF", fontSize: 10, fontWeight: "900" },
-  send: { alignItems: "center", backgroundColor: "#173F91", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
-  talkTool: { alignItems: "center", backgroundColor: "#073F3A", borderColor: "#167A70", borderRadius: 13, borderWidth: 1, flex: 1, height: 42, justifyContent: "center" },
-  talkToolLive: { backgroundColor: "#B24873", borderColor: "#FF9BB8" },
-  tool: { alignItems: "center", borderRadius: 13, borderWidth: 1, flex: 1, height: 42, justifyContent: "center" },
-  toolActive: { backgroundColor: "#6241D9", borderColor: "#AB8DFF" },
-  toolCall: { backgroundColor: "#282052", borderColor: "#51479A" },
-  toolCallActive: { backgroundColor: "#C72674", borderColor: "#FF7FC2" },
-  toolCamera: { backgroundColor: "#372B15", borderColor: "#8B6B2E" },
-  toolChat: { backgroundColor: "#0759D6", borderColor: "#4C9AFF" },
-  toolChatActive: { backgroundColor: "#297BFF", borderColor: "#9AC4FF" },
-  toolPressed: { opacity: 0.76, transform: [{ scale: 0.94 }] },
-  toolSync: { backgroundColor: "#282052", borderColor: "#5A4BA5" },
-  toolsRow: { alignItems: "center", backgroundColor: "#0E1728", borderColor: "#2D405F", borderRadius: 18, borderWidth: 1, flexDirection: "row-reverse", gap: 5, padding: 5 },
-  unavailable: { alignItems: "center", backgroundColor: "#101A34", borderColor: "#293B66", borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", gap: 8, marginHorizontal: 10, marginTop: 8, padding: 12 },
-  unavailableText: { color: palette.muted, flex: 1, fontSize: 12, lineHeight: 18, textAlign: "right" },
-  videoPlaceholder: { backgroundColor: "#101A34", borderRadius: 12, height: 110, width: "48%" },
-  videoTrack: { backgroundColor: "#070B16", borderRadius: 12, height: 110, overflow: "hidden", width: "48%" },
+  actionButton: { alignItems: "center", backgroundColor: "#182540", borderColor: "#354B75", borderRadius: 14, borderWidth: 1, flex: 1, gap: 5, minHeight: 70, justifyContent: "center", padding: 6 },
+  actionButtonDanger: { backgroundColor: "#381E2A", borderColor: "#914258" }, actionButtonDangerText: { color: "#FFADAB" }, actionButtonText: { color: "#DADFFC", fontSize: 10, fontWeight: "800", textAlign: "center" }, actionGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 7 },
+  actionGroupTitle: { color: "#AAB7D6", fontSize: 12, fontWeight: "900", marginBottom: 8, marginTop: 14, textAlign: "right" },
+  avatar: { alignItems: "center", backgroundColor: "#28517E", borderRadius: 21, height: 42, justifyContent: "center", width: 42 }, avatarMine: { backgroundColor: "#6846D6" }, avatarText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
+  cameraGrid: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 8, minHeight: 118 }, cameraPane: { backgroundColor: palette.panel, borderColor: "#2D456D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, overflow: "hidden", padding: 8 },
+  chatHeader: { alignItems: "center", borderBottomColor: "#29364F", borderBottomWidth: 1, flexDirection: "row-reverse", justifyContent: "flex-start", paddingBottom: 8 }, chatHeaderTitle: { color: "#F2F4FF", fontSize: 15, fontWeight: "900", textAlign: "right" },
+  chatInput: { backgroundColor: "#111C31", borderColor: "#2F405E", borderRadius: 14, borderWidth: 1, color: palette.text, flex: 1, fontSize: 14, height: 49, paddingHorizontal: 13 }, chatPane: { backgroundColor: "#10192A", borderColor: "#2A3C5D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, minHeight: 264, overflow: "hidden", paddingHorizontal: 14, paddingTop: 13 },
+  compactLoading: { alignItems: "center", height: 48, justifyContent: "center" }, composer: { alignItems: "center", borderTopColor: "#28364E", borderTopWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: -14, paddingHorizontal: 12, paddingVertical: 10 },
+  levelSelector: { flexDirection: "row-reverse", gap: 6, paddingVertical: 8 }, levelStep: { backgroundColor: "#273652", borderRadius: 4, flex: 1, height: 8 }, levelStepActive: { backgroundColor: "#895DFF" },
+  memberActionIdentity: { alignItems: "center", flexDirection: "row-reverse", gap: 9 }, memberActionName: { color: palette.text, fontSize: 14, fontWeight: "900", textAlign: "right" }, memberActionSheet: { backgroundColor: "#0F182A", borderColor: "#6D51C8", borderRadius: 20, borderWidth: 1, bottom: 8, left: 0, maxHeight: 430, padding: 14, position: "absolute", right: 0, shadowColor: "#000", shadowOpacity: 0.4, shadowRadius: 18 }, memberActionTop: { alignItems: "center", borderBottomColor: "#29364E", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingBottom: 11 },
+  memberAvatar: { alignItems: "center", backgroundColor: "#254B76", borderRadius: 17, height: 34, justifyContent: "center", width: 34 }, memberInfo: { flex: 1, marginRight: 9 }, memberName: { color: palette.text, fontSize: 14, fontWeight: "800", textAlign: "right" }, memberPane: { backgroundColor: palette.panel, borderColor: "#2D456D", borderRadius: 18, borderWidth: 1, flex: 1, marginTop: 16, minHeight: 264, padding: 10 }, memberRole: { color: palette.muted, fontSize: 10, marginTop: 2, textAlign: "right" }, memberRow: { alignItems: "center", borderBottomColor: "#263650", borderBottomWidth: 1, flexDirection: "row-reverse", minHeight: 60, paddingVertical: 8 },
+  messageBody: { backgroundColor: "#1B2947", borderRadius: 14, flexShrink: 1, maxWidth: "82%", paddingHorizontal: 12, paddingVertical: 8 }, messageBodyMine: { backgroundColor: "#3D2D78" }, messageMeta: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-between" }, messageRow: { alignItems: "flex-start", flexDirection: "row-reverse", gap: 9, marginBottom: 12, paddingHorizontal: 1 }, messageSender: { color: "#AE91FF", fontSize: 12, fontWeight: "900", textAlign: "right" }, messageText: { color: palette.text, fontSize: 14, lineHeight: 21, marginTop: 3, textAlign: "right" }, messages: { flex: 1 }, messagesContent: { paddingBottom: 7, paddingTop: 10 }, messagesEmpty: { flexGrow: 1 },
+  panel: { backgroundColor: "transparent", flex: 1, marginHorizontal: 8, paddingTop: 16 }, permissionName: { color: "#E4E7F6", fontSize: 12, fontWeight: "700", textAlign: "right" }, permissionRow: { alignItems: "center", backgroundColor: "#141F35", borderColor: "#2D3E5E", borderRadius: 12, borderWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", marginTop: 7, minHeight: 43, paddingHorizontal: 11 }, permissionRowActive: { backgroundColor: "#281E58", borderColor: "#7A58DF" },
+  send: { alignItems: "center", backgroundColor: "#6F43D5", borderRadius: 15, height: 49, justifyContent: "center", width: 54 }, tool: { alignItems: "center", borderColor: "#283750", borderLeftWidth: 1, flex: 1, gap: 7, justifyContent: "center", minHeight: 105, paddingHorizontal: 4, paddingVertical: 10 }, toolActive: { backgroundColor: "#241C50", borderBottomColor: "#8D63FF", borderBottomWidth: 3 }, toolCall: { backgroundColor: "#121A2B" }, toolCamera: { backgroundColor: "#121A2B" }, toolChat: { backgroundColor: "#121A2B" }, toolDisabled: { opacity: 0.42 }, toolLabel: { color: "#D3DAEF", fontSize: 12, fontWeight: "800", textAlign: "center" }, toolMembers: { backgroundColor: "#121A2B" }, toolPressed: { opacity: 0.76, transform: [{ scale: 0.97 }] }, toolTalk: { backgroundColor: "#121A2B" }, toolTalkLive: { backgroundColor: "#1C665A", borderBottomColor: "#67E2C9", borderBottomWidth: 3 }, toolsRow: { backgroundColor: "#111A2B", borderColor: "#253653", borderRadius: 18, borderWidth: 1, flexDirection: "row-reverse", overflow: "hidden" },
+  unavailable: { alignItems: "center", backgroundColor: "#101A34", borderColor: "#293B66", borderRadius: 16, borderWidth: 1, flexDirection: "row-reverse", gap: 8, marginHorizontal: 10, marginTop: 8, padding: 12 }, unavailableText: { color: palette.muted, flex: 1, fontSize: 12, lineHeight: 18, textAlign: "right" }, videoPlaceholder: { backgroundColor: "#101A34", borderRadius: 12, height: 110, width: "48%" }, videoTrack: { backgroundColor: "#070B16", borderRadius: 12, height: 110, overflow: "hidden", width: "48%" },
 });

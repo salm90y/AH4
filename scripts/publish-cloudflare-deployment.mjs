@@ -24,6 +24,7 @@ const files = [
   "design.md",
   "docs/cloudflare-architecture-notes.md",
   "docs/livekit-integration-notes.md",
+  "docs/livekit-roomservice-reference.md",
   "docs/room-reference-review.md",
   "lib/livekit-setup.ts",
   "lib/livekit-setup.native.ts",

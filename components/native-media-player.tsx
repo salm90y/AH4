@@ -22,9 +22,8 @@ function formatTime(value: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function NativeMediaPlayer({ sourceUrl, canControl }: { sourceUrl: string | null; canControl: boolean }) {
+export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChange }: { sourceUrl: string | null; canControl: boolean; volume: number; onVolumeChange: (volume: number) => void }) {
   const viewRef = useRef<VideoView>(null);
-  const [volume, setVolume] = useState(0.8);
   const [readySource, setReadySource] = useState<VideoSource | null>(null);
   const resumeOnForeground = useRef(false);
   const player = useVideoPlayer(null, (instance) => {
@@ -32,7 +31,7 @@ export function NativeMediaPlayer({ sourceUrl, canControl }: { sourceUrl: string
     instance.audioMixingMode = "mixWithOthers";
     instance.showNowPlayingNotification = true;
     instance.staysActiveInBackground = true;
-    instance.volume = volume;
+    instance.volume = Math.max(0, Math.min(1, volume));
   });
   const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
   const { status, error } = useEvent(player, "statusChange", { status: player.status, error: undefined });
@@ -66,7 +65,7 @@ export function NativeMediaPlayer({ sourceUrl, canControl }: { sourceUrl: string
   }, [player, sourceUrl]);
 
   useEffect(() => {
-    player.volume = volume;
+    player.volume = Math.max(0, Math.min(1, volume));
   }, [player, volume]);
 
   useEffect(() => {
@@ -178,7 +177,7 @@ export function NativeMediaPlayer({ sourceUrl, canControl }: { sourceUrl: string
         <Control disabled={!canControl} icon="replay-10" label="رجوع عشر ثوانٍ" onPress={() => seekBy(-10)} />
         <Control disabled={!canControl} icon={isPlaying ? "pause" : "play-arrow"} label={isPlaying ? "إيقاف الفيديو" : "تشغيل الفيديو"} onPress={togglePlayback} primary />
         <Control disabled={!canControl} icon="forward-10" label="تقديم عشر ثوانٍ" onPress={() => seekBy(10)} />
-        <Control icon={volume === 0 ? "volume-off" : "volume-up"} label={volume === 0 ? "إلغاء كتم الفيديو" : "كتم الفيديو"} onPress={() => setVolume((value) => (value === 0 ? 0.8 : 0))} />
+        <Control icon={volume === 0 ? "volume-off" : "volume-up"} label={volume === 0 ? "إلغاء كتم الفيديو" : "كتم الفيديو"} onPress={() => onVolumeChange(volume === 0 ? 0.8 : 0)} />
         <Control icon="fullscreen" label="تكبير الفيديو" onPress={() => viewRef.current?.enterFullscreen().catch(() => undefined)} />
       </View>
 
