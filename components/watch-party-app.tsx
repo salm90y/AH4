@@ -11,7 +11,7 @@ import { getGuestParticipantId } from "@/lib/guest-identity";
 import { parseM3uPlaylist, type M3uEntry } from "@/lib/m3u";
 import { createCloudRoom, joinCloudRoom, type RoomPermission, type RoomRole } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -189,6 +189,13 @@ export function WatchPartyApp() {
   const [channelQuery, setChannelQuery] = useState("");
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
+
+  const applySelfAccess = useCallback((next: { role: RoomRole; permissions: RoomPermission[] }) => {
+    setRoom((current) => {
+      if (!current || (current.role === next.role && current.permissions.join("|") === next.permissions.join("|"))) return current;
+      return { ...current, role: next.role, permissions: next.permissions, host: next.role === "host" };
+    });
+  }, []);
 
   useKeepAwake(screen === "room" ? "ah4-watch-party-room" : undefined);
 
@@ -662,7 +669,7 @@ export function WatchPartyApp() {
         {room ? <RoomRealtimePanel
           accessToken={room.accessToken}
           credentials={room.credentials}
-          onSelfAccessChange={(next) => setRoom((current) => current ? { ...current, role: next.role, permissions: next.permissions, host: next.role === "host" } : current)}
+          onSelfAccessChange={applySelfAccess}
           participantId={room.participantId}
           permissions={room.permissions}
           role={room.role}
