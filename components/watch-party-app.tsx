@@ -9,7 +9,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { getGuestParticipantId } from "@/lib/guest-identity";
 import { parseM3uPlaylist, type M3uEntry } from "@/lib/m3u";
-import { createCloudRoom, joinCloudRoom, searchRoomYouTube, updateCloudRoomSettings, type RoomPermission, type RoomRole, type RoomVisibility, type YouTubeSearchResult } from "@/lib/room-api";
+import { createCloudRoom, joinCloudRoom, searchRoomYouTube, updateCloudRoomSettings, updateRoomSource, type RoomPermission, type RoomRole, type RoomSource, type RoomVisibility, type YouTubeSearchResult } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -215,6 +215,17 @@ export function WatchPartyApp() {
     });
   }, []);
 
+  const publishSharedSource = async (nextSource: RoomSource) => {
+    if (!room) return;
+    try {
+      const { source } = await updateRoomSource({ roomCode: room.code, accessToken: room.accessToken, source: nextSource });
+      setRoom((current) => current ? { ...current, ...source } : current);
+      await publishRoomSync({ type: "source", ...source, sentAt: Date.now() });
+    } catch (error) {
+      Alert.alert("تعذر تحديث المصدر", error instanceof Error ? error.message : "تعذر نشر مصدر المشاهدة للضيوف.");
+    }
+  };
+
   useKeepAwake(screen === "room" ? "ah4-watch-party-room" : undefined);
 
   useEffect(() => {
@@ -261,9 +272,9 @@ export function WatchPartyApp() {
         participantId,
         passwordProtected: created.passwordProtected,
         visibility: created.visibility,
-        sourceLabel: "لم يتم اختيار مصدر بعد",
-        sourceType: null,
-        sourceUrl: null,
+        sourceLabel: created.source?.sourceLabel ?? "لم يتم اختيار مصدر بعد",
+        sourceType: created.source?.sourceType ?? null,
+        sourceUrl: created.source?.sourceUrl ?? null,
         credentials: { code: created.code, serverUrl: created.serverUrl, token: created.token },
       });
       setScreen("room");
@@ -299,9 +310,9 @@ export function WatchPartyApp() {
         participantId,
         passwordProtected: joined.passwordProtected,
         visibility: joined.visibility,
-        sourceLabel: "بانتظار المصدر من المضيف",
-        sourceType: null,
-        sourceUrl: null,
+        sourceLabel: joined.source?.sourceLabel ?? "بانتظار المصدر من المضيف",
+        sourceType: joined.source?.sourceType ?? null,
+        sourceUrl: joined.source?.sourceUrl ?? null,
         credentials: { code: joined.code, serverUrl: joined.serverUrl, token: joined.token },
       });
       setScreen("room");
@@ -316,8 +327,7 @@ export function WatchPartyApp() {
     if (sourceType === "youtube") {
       if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim())) {
         const nextSource = { sourceLabel: "فيديو YouTube", sourceType: "youtube" as const, sourceUrl: youtubeUrl.trim() };
-        setRoom((current) => current ? { ...current, ...nextSource } : current);
-        void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+        void publishSharedSource(nextSource);
         setScreen("room");
         return;
       }
@@ -340,8 +350,7 @@ export function WatchPartyApp() {
     }
 
     const nextSource = { sourceLabel: sourceUrl.trim(), sourceType: "hls" as const, sourceUrl: sourceUrl.trim() };
-    setRoom((current) => (current ? { ...current, ...nextSource } : current));
-    void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+    void publishSharedSource(nextSource);
     setScreen("room");
   };
 
@@ -364,8 +373,7 @@ export function WatchPartyApp() {
 
   const chooseYouTubeResult = (item: YouTubeSearchResult) => {
     const nextSource = { sourceLabel: item.title, sourceType: "youtube" as const, sourceUrl: `https://www.youtube.com/watch?v=${item.videoId}` };
-    setRoom((current) => current ? { ...current, ...nextSource } : current);
-    void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+    void publishSharedSource(nextSource);
     setYoutubeResults([]);
     setYoutubeNextPage(null);
     setRoomYoutubeResultsOpen(false);
@@ -404,8 +412,7 @@ export function WatchPartyApp() {
 
   const chooseChannel = (channel: M3uEntry) => {
     const nextSource = { sourceLabel: channel.name, sourceType: "m3u" as const, sourceUrl: channel.url };
-    setRoom((current) => (current ? { ...current, ...nextSource } : current));
-    void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+    void publishSharedSource(nextSource);
     setScreen("room");
   };
 
@@ -435,8 +442,7 @@ export function WatchPartyApp() {
     }
     if (isStreamUrl) {
       const nextSource = { sourceLabel: query, sourceType: "hls" as const, sourceUrl: query };
-      setRoom((current) => current ? { ...current, ...nextSource } : current);
-      void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+      void publishSharedSource(nextSource);
       setRoomSearchInput("");
       return;
     } else if (isYoutubeUrl) {
@@ -737,6 +743,7 @@ export function WatchPartyApp() {
           credentials={room.credentials}
           onCallVolumeChange={setCallVolume}
           onSelfAccessChange={applySelfAccess}
+          onSourceChange={(source) => setRoom((current) => current ? { ...current, ...source } : current)}
           participantId={room.participantId}
           permissions={room.permissions}
           role={room.role}

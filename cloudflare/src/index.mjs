@@ -6,6 +6,7 @@ const GRANTABLE_PERMISSIONS = ["control_source", "control_playback", "search_you
 const HOST_PERMISSIONS = [...GRANTABLE_PERMISSIONS];
 const MODERATOR_PERMISSIONS = ["moderate_chat", "manage_members"];
 const MEMBER_ACTIONS = ["mute", "unmute", "block_camera", "allow_camera", "kick"];
+const ROOM_SOURCE_TYPES = ["hls", "m3u", "youtube"];
 
 function corsHeaders(headers = {}) {
   return {
@@ -25,6 +26,20 @@ function validDisplayName(value) { return typeof value === "string" && value.tri
 function validRoomCode(value) { return typeof value === "string" && /^AH4-[A-F0-9]{8}$/.test(value); }
 function validMessageId(value) { return typeof value === "string" && /^[a-zA-Z0-9_-]{8,120}$/.test(value); }
 function validVisibility(value) { return ROOM_VISIBILITIES.includes(value); }
+function savedSettings(value) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+function normalizedRoomSource(value) {
+  if (!value || typeof value !== "object" || !ROOM_SOURCE_TYPES.includes(value.sourceType) || typeof value.sourceUrl !== "string" || typeof value.sourceLabel !== "string") return null;
+  const sourceUrl = value.sourceUrl.trim();
+  const sourceLabel = value.sourceLabel.trim();
+  if (!sourceUrl || sourceUrl.length > 2048 || !sourceLabel || sourceLabel.length > 180) return null;
+  if (value.sourceType === "youtube") return /^https:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(sourceUrl) ? { sourceType: value.sourceType, sourceUrl, sourceLabel } : null;
+  return /^https:\/\//i.test(sourceUrl) ? { sourceType: value.sourceType, sourceUrl, sourceLabel } : null;
+}
 
 function createRoomCode() {
   const bytes = crypto.getRandomValues(new Uint8Array(4));
@@ -135,7 +150,8 @@ async function findMember(roomCode, participantId, env) {
 async function findRoomSettings(room, env) {
   const saved = await env.ROOMS_DB.prepare("SELECT visibility, settings FROM room_settings WHERE room_code = ?").bind(room.code).first();
   const visibility = saved?.visibility === "public" || saved?.visibility === "private" ? saved.visibility : room.passwordHash ? "private" : "public";
-  return { visibility, settings: saved?.settings || "{}" };
+  const settings = savedSettings(saved?.settings);
+  return { visibility, settings, source: normalizedRoomSource(settings.source) };
 }
 async function ensureMember(room, participantId, displayName, env) {
   const role = room.hostParticipantId === participantId ? "host" : "member";
@@ -150,7 +166,7 @@ async function roomResponse(room, participantId, displayName, env) {
   const member = await ensureMember(room, participantId, displayName, env);
   if (!member) throw new Error("Could not establish room membership");
   const settings = await findRoomSettings(room, env);
-  return { code: room.code, name: room.name, passwordProtected: settings.visibility === "private", visibility: settings.visibility, host: member.role === "host", role: member.role, permissions: memberPermissions(member), accessToken: await createRoomAccessToken({ roomCode: room.code, participantId }, env), ...(await createLiveKitToken({ displayName: member.displayName, host: member.role === "host", member, participantId, room: room.code }, env)) };
+  return { code: room.code, name: room.name, passwordProtected: settings.visibility === "private", visibility: settings.visibility, source: settings.source, host: member.role === "host", role: member.role, permissions: memberPermissions(member), accessToken: await createRoomAccessToken({ roomCode: room.code, participantId }, env), ...(await createLiveKitToken({ displayName: member.displayName, host: member.role === "host", member, participantId, room: room.code }, env)) };
 }
 
 async function createRoom(input, env) {
@@ -208,7 +224,7 @@ async function roomState(roomCode, accessToken, env) {
     env.ROOMS_DB.prepare("SELECT id, author_participant_id AS authorId, author_name AS authorName, text, created_at AS createdAt FROM room_messages WHERE room_code = ? AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 60").bind(roomCode).all(),
     findRoomSettings(actor.room, env),
   ]);
-  return json({ code: actor.room.code, name: actor.room.name, role: actor.member.role, permissions: memberPermissions(actor.member), member: publicMember(actor.member), members: memberRows.results.map(publicMember), messages: messageRows.results, visibility: settings.visibility });
+  return json({ code: actor.room.code, name: actor.room.name, role: actor.member.role, permissions: memberPermissions(actor.member), member: publicMember(actor.member), members: memberRows.results.map(publicMember), messages: messageRows.results, visibility: settings.visibility, source: settings.source });
 }
 
 async function createMessage(input, env) {
@@ -301,8 +317,21 @@ async function updateRoomSettings(input, env) {
     passwordHash = toBase64(await derivePasswordHash(input.password, salt));
   }
   await env.ROOMS_DB.prepare("UPDATE watch_rooms SET password_hash = ?, password_salt = ? WHERE code = ?").bind(passwordHash, passwordSalt, input.roomCode).run();
-  await env.ROOMS_DB.prepare("INSERT OR REPLACE INTO room_settings (room_code, visibility, settings, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)").bind(input.roomCode, input.visibility, "{}").run();
+  const existing = await findRoomSettings(actor.room, env);
+  await env.ROOMS_DB.prepare("INSERT OR REPLACE INTO room_settings (room_code, visibility, settings, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)").bind(input.roomCode, input.visibility, JSON.stringify(existing.settings)).run();
   return json({ visibility: input.visibility, passwordProtected: input.visibility === "private" });
+}
+
+async function updateRoomSource(input, env) {
+  if (!input || !validRoomCode(input.roomCode)) return json({ error: "بيانات مصدر المشاهدة غير صالحة." }, 400);
+  const actor = await authorizedMember(input.roomCode, input.accessToken, env);
+  if (!actor || !memberPermissions(actor.member).includes("control_source")) return json({ error: "ليس لديك إذن تغيير مصدر المشاهدة في هذه الغرفة." }, 403);
+  const source = normalizedRoomSource(input.source);
+  if (!source) return json({ error: "أدخل مصدرًا مرخّصًا برابط HTTPS مباشر أو رابط YouTube صالح." }, 400);
+  const existing = await findRoomSettings(actor.room, env);
+  const settings = { ...existing.settings, source, sourceUpdatedAt: Date.now() };
+  await env.ROOMS_DB.prepare("INSERT OR REPLACE INTO room_settings (room_code, visibility, settings, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)").bind(input.roomCode, existing.visibility, JSON.stringify(settings)).run();
+  return json({ source });
 }
 
 async function searchYouTube(input, env) {
@@ -338,6 +367,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/rooms/members/permissions") return await setMemberPermissions(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/members/action") return await setMemberAction(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/settings") return await updateRoomSettings(await readJson(request), env);
+      if (request.method === "POST" && url.pathname === "/v1/rooms/source") return await updateRoomSource(await readJson(request), env);
       if (request.method === "POST" && url.pathname === "/v1/rooms/youtube/search") return await searchYouTube(await readJson(request), env);
       return json({ error: "المسار غير موجود." }, 404);
     } catch {

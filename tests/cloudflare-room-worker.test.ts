@@ -147,4 +147,18 @@ describe("Cloudflare room Worker", () => {
     const denied = await worker.fetch(new Request(`https://api.ahmed1986y.com/v1/rooms/${created.code}/state`, { headers: { Authorization: `Bearer ${joined.accessToken}` } }), environment);
     expect(denied.status).toBe(401);
   });
+
+  it("persists the host source so a guest receives it on joining and state refresh", async () => {
+    const environment = env();
+    const created = await (await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "مصدر مشترك", password: "", participantId: "host_22334455", displayName: "المضيف" }) }), environment)).json() as { code: string; accessToken: string };
+    const source = { sourceLabel: "فيديو الغرفة", sourceType: "youtube", sourceUrl: "https://www.youtube.com/watch?v=abc123xyz00" };
+    const saved = await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomCode: created.code, accessToken: created.accessToken, source }) }), environment);
+    expect(saved.status).toBe(200);
+
+    const joined = await (await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: created.code, password: "", participantId: "guest_2233445", displayName: "ضيف" }) }), environment)).json() as { accessToken: string; source: typeof source };
+    expect(joined.source).toEqual(source);
+
+    const state = await (await worker.fetch(new Request(`https://api.ahmed1986y.com/v1/rooms/${created.code}/state`, { headers: { Authorization: `Bearer ${joined.accessToken}` } }), environment)).json() as { source: typeof source };
+    expect(state.source).toEqual(source);
+  });
 });

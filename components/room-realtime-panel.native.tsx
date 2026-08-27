@@ -5,8 +5,9 @@ import { AndroidAudioTypePresets, AudioSession, isTrackReference, LiveKitRoom, u
 import { DataPacket_Kind, RoomEvent, Track } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { deleteRoomMessage, getRoomState, performRoomMemberAction, postRoomMessage, updateRoomMemberPermissions, type RoomChatMessage, type RoomMember, type RoomMemberAction, type RoomPermission, type RoomRole } from "@/lib/room-api";
+import { deleteRoomMessage, getRoomState, performRoomMemberAction, postRoomMessage, updateRoomMemberPermissions, type RoomChatMessage, type RoomMember, type RoomMemberAction, type RoomPermission, type RoomRole, type RoomSource } from "@/lib/room-api";
 import { ensureLiveKitGlobals } from "@/lib/livekit-setup";
+import { receiveRoomSync, setRoomSyncPublisher, type RoomSyncEvent } from "@/lib/room-sync";
 
 export type RealtimeRoomCredentials = { code: string; serverUrl: string; token: string };
 type ChatMessage = RoomChatMessage & { mine: boolean };
@@ -16,12 +17,13 @@ type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 const palette = { cyan: "#8E65FF", muted: "#98A4C0", panel: "#10182A", text: "#F8F8FF" };
 const permissionLabels: Record<RoomPermission, string> = { control_source: "تغيير المصدر", control_playback: "التحكم بالفيديو", search_youtube: "بحث YouTube", moderate_chat: "إدارة الدردشة", manage_members: "إدارة الأعضاء" };
 
-export function RoomRealtimePanel({ accessToken, callVolume, credentials, onSelfAccessChange, onCallVolumeChange, participantId, permissions, role }: {
+export function RoomRealtimePanel({ accessToken, callVolume, credentials, onSelfAccessChange, onCallVolumeChange, onSourceChange, participantId, permissions, role }: {
   accessToken: string;
   callVolume: number;
   credentials: RealtimeRoomCredentials;
   onSelfAccessChange: (access: { role: RoomRole; permissions: RoomPermission[] }) => void;
   onCallVolumeChange: (volume: number) => void;
+  onSourceChange: (source: RoomSource) => void;
   participantId: string;
   permissions: RoomPermission[];
   role: RoomRole;
@@ -39,16 +41,17 @@ export function RoomRealtimePanel({ accessToken, callVolume, credentials, onSelf
   }, []);
   if (!credentials.serverUrl || !credentials.token) return <View style={styles.unavailable}><MaterialIcons color={palette.cyan} name="cloud-sync" size={20} /><Text style={styles.unavailableText}>يتم تجهيز قناة التواصل الآمن للغرفة.</Text></View>;
   if (!audioConfigured) return <View style={styles.compactLoading}><MaterialIcons color={palette.cyan} name="sync" size={18} /></View>;
-  return <LiveKitRoom audio={false} connect onConnected={() => setConnectionStatus("connected")} onDisconnected={() => setConnectionStatus("disconnected")} onError={() => { setConnectionStatus("error"); Alert.alert("تعذر الاتصال", "تعذر فتح قناة الاتصال. تحقق من الإنترنت ثم أعد دخول الغرفة."); }} onMediaDeviceFailure={() => Alert.alert("تعذر تشغيل جهاز الوسائط", "تحقق من سماح Android للميكروفون أو الكاميرا ثم أعد المحاولة.")} serverUrl={credentials.serverUrl} token={credentials.token} video={false}><RealtimeControls accessToken={accessToken} callVolume={callVolume} code={credentials.code} connectionStatus={connectionStatus} onCallVolumeChange={onCallVolumeChange} onSelfAccessChange={onSelfAccessChange} participantId={participantId} permissions={permissions} role={role} /></LiveKitRoom>;
+  return <LiveKitRoom audio={false} connect onConnected={() => setConnectionStatus("connected")} onDisconnected={() => setConnectionStatus("disconnected")} onError={() => { setConnectionStatus("error"); Alert.alert("تعذر الاتصال", "تعذر فتح قناة الاتصال. تحقق من الإنترنت ثم أعد دخول الغرفة."); }} onMediaDeviceFailure={() => Alert.alert("تعذر تشغيل جهاز الوسائط", "تحقق من سماح Android للميكروفون أو الكاميرا ثم أعد المحاولة.")} serverUrl={credentials.serverUrl} token={credentials.token} video={false}><RealtimeControls accessToken={accessToken} callVolume={callVolume} code={credentials.code} connectionStatus={connectionStatus} onCallVolumeChange={onCallVolumeChange} onSelfAccessChange={onSelfAccessChange} onSourceChange={onSourceChange} participantId={participantId} permissions={permissions} role={role} /></LiveKitRoom>;
 }
 
-function RealtimeControls({ accessToken, callVolume, code, connectionStatus, onCallVolumeChange, onSelfAccessChange, participantId, permissions, role }: {
+function RealtimeControls({ accessToken, callVolume, code, connectionStatus, onCallVolumeChange, onSelfAccessChange, onSourceChange, participantId, permissions, role }: {
   accessToken: string;
   callVolume: number;
   code: string;
   connectionStatus: ConnectionStatus;
   onCallVolumeChange: (volume: number) => void;
   onSelfAccessChange: (access: { role: RoomRole; permissions: RoomPermission[] }) => void;
+  onSourceChange: (source: RoomSource) => void;
   participantId: string;
   permissions: RoomPermission[];
   role: RoomRole;
@@ -79,12 +82,13 @@ function RealtimeControls({ accessToken, callVolume, code, connectionStatus, onC
     setMembers(state.members);
     setSelfModeration({ muted: state.member.muted, cameraBlocked: state.member.cameraBlocked });
     setChat(state.messages.map((message) => ({ ...message, mine: message.authorId === participantId })));
+    if (state.source) onSourceChange(state.source);
     onSelfAccessChange({ role: state.role, permissions: state.permissions });
-  }, [accessToken, code, onSelfAccessChange, participantId]);
+  }, [accessToken, code, onSelfAccessChange, onSourceChange, participantId]);
 
   useEffect(() => {
     void hydrateRoom().catch(() => undefined);
-    const refresh = setInterval(() => void hydrateRoom().catch(() => undefined), 15_000);
+    const refresh = setInterval(() => void hydrateRoom().catch(() => undefined), 4_000);
     return () => clearInterval(refresh);
   }, [hydrateRoom]);
 
@@ -98,10 +102,11 @@ function RealtimeControls({ accessToken, callVolume, code, connectionStatus, onC
   }, [room]);
 
   useEffect(() => {
-    const onData = (payload: Uint8Array, participant?: { name?: string; identity?: string }, kind?: DataPacket_Kind) => {
+    const onData = (payload: Uint8Array, participant?: { name?: string; identity?: string }, kind?: DataPacket_Kind, topic?: string) => {
       if (kind !== DataPacket_Kind.RELIABLE) return;
       try {
-        const packet = JSON.parse(new TextDecoder().decode(payload)) as { kind?: string; id?: string; text?: string; authorId?: string; authorName?: string; createdAt?: string };
+        const packet = JSON.parse(new TextDecoder().decode(payload)) as { kind?: string; event?: RoomSyncEvent; id?: string; text?: string; authorId?: string; authorName?: string; createdAt?: string };
+        if (topic === "ah4-room-sync" && packet.kind === "ah4-room-sync" && packet.event?.type === "source") { receiveRoomSync(packet.event); return; }
         if (packet.kind === "ah4-chat-delete" && packet.id) { setChat((current) => current.filter((message) => message.id !== packet.id)); return; }
         const id = packet.id; const text = packet.text?.trim();
         if (packet.kind !== "ah4-chat" || !id || !text) return;
@@ -112,6 +117,13 @@ function RealtimeControls({ accessToken, callVolume, code, connectionStatus, onC
     room.on(RoomEvent.DataReceived, onData);
     return () => { room.off(RoomEvent.DataReceived, onData); void room.localParticipant.setCameraEnabled(false); void room.localParticipant.setMicrophoneEnabled(false); void AudioSession.stopAudioSession().catch(() => undefined); };
   }, [participantId, room]);
+
+  useEffect(() => {
+    setRoomSyncPublisher(async (event) => {
+      await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ kind: "ah4-room-sync", event })), { reliable: true, topic: "ah4-room-sync" });
+    });
+    return () => setRoomSyncPublisher(null);
+  }, [room]);
 
   useEffect(() => {
     if (selfModeration.muted) { setCallOn(false); setTalking(false); void room.localParticipant.setMicrophoneEnabled(false); }
