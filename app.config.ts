@@ -120,6 +120,7 @@ const config: ExpoConfig = {
     ],
     "@livekit/react-native-expo-plugin",
     "@config-plugins/react-native-webrtc",
+    "./plugins/with-livekit-android-setup.js",
     [
       "expo-splash-screen",
       {

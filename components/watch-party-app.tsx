@@ -179,6 +179,7 @@ export function WatchPartyApp() {
   const [youtubeResults, setYoutubeResults] = useState<YouTubeSearchResult[]>([]);
   const [youtubeNextPage, setYoutubeNextPage] = useState<string | null>(null);
   const [youtubeSearching, setYoutubeSearching] = useState(false);
+  const [roomYoutubeResultsOpen, setRoomYoutubeResultsOpen] = useState(false);
   const [roomSearchInput, setRoomSearchInput] = useState("");
   const [searchHint, setSearchHint] = useState("");
   const [videoVolume, setVideoVolume] = useState(0.8);
@@ -314,15 +315,17 @@ export function WatchPartyApp() {
   const applySource = () => {
     if (sourceType === "youtube") {
       if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim())) {
-        void WebBrowser.openBrowserAsync(youtubeUrl.trim(), { toolbarColor: "#0B1020", controlsColor: "#7C5CFC" });
-        setSearchHint("فُتح الرابط عبر YouTube الرسمي. لا يمكن مزامنة تحكم تطبيق YouTube الخارجي مع الغرفة.");
+        const nextSource = { sourceLabel: "فيديو YouTube", sourceType: "youtube" as const, sourceUrl: youtubeUrl.trim() };
+        setRoom((current) => current ? { ...current, ...nextSource } : current);
+        void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+        setScreen("room");
         return;
       }
       if (!youtubeQuery.trim()) {
         setSearchHint("اكتب كلمة أو جملة للبحث عن فيديوهات YouTube.");
         return;
       }
-      void searchYouTube(false);
+      void searchYouTube(youtubeQuery, false);
       return;
     }
 
@@ -331,8 +334,8 @@ export function WatchPartyApp() {
       return;
     }
 
-    if (!/^https?:\/\//i.test(sourceUrl.trim())) {
-      Alert.alert("رابط غير صالح", "أدخل رابط M3U8 يبدأ بـ http:// أو https://.");
+    if (!/^https:\/\/[^\s]+\.(?:m3u8|mp4)(?:$|[?#])/i.test(sourceUrl.trim())) {
+      Alert.alert("رابط غير صالح", "أدخل رابط HTTPS مباشرًا ينتهي بـ .m3u8 أو .mp4. لا يمكن للتطبيق استخراج بث من صفحات المواقع أو المحتوى المحمي.");
       return;
     }
 
@@ -342,19 +345,32 @@ export function WatchPartyApp() {
     setScreen("room");
   };
 
-  const searchYouTube = async (more: boolean) => {
-    if (!room || !youtubeQuery.trim() || youtubeSearching) return;
+  const searchYouTube = async (rawQuery: string, more: boolean) => {
+    const query = rawQuery.trim();
+    if (!room || !query || youtubeSearching) return;
     try {
       setYoutubeSearching(true);
-      const result = await searchRoomYouTube({ roomCode: room.code, accessToken: room.accessToken, query: youtubeQuery.trim(), ...(more && youtubeNextPage ? { pageToken: youtubeNextPage } : {}) });
+      const result = await searchRoomYouTube({ roomCode: room.code, accessToken: room.accessToken, query, ...(more && youtubeNextPage ? { pageToken: youtubeNextPage } : {}) });
       setYoutubeResults((current) => more ? [...current, ...result.items] : result.items);
       setYoutubeNextPage(result.nextPageToken);
-      setSearchHint(result.items.length ? "اختر فيديو لفتحه في واجهة YouTube الرسمية." : "لم تظهر نتائج مطابقة.");
+      setRoomYoutubeResultsOpen(true);
+      setSearchHint(result.items.length ? "اختر فيديو لتشغيله داخل الغرفة." : "لم تظهر نتائج مطابقة.");
     } catch (error) {
       setSearchHint(error instanceof Error ? error.message : "تعذر البحث في YouTube الآن.");
     } finally {
       setYoutubeSearching(false);
     }
+  };
+
+  const chooseYouTubeResult = (item: YouTubeSearchResult) => {
+    const nextSource = { sourceLabel: item.title, sourceType: "youtube" as const, sourceUrl: `https://www.youtube.com/watch?v=${item.videoId}` };
+    setRoom((current) => current ? { ...current, ...nextSource } : current);
+    void publishRoomSync({ type: "source", ...nextSource, sentAt: Date.now() });
+    setYoutubeResults([]);
+    setYoutubeNextPage(null);
+    setRoomYoutubeResultsOpen(false);
+    setRoomSearchInput("");
+    setScreen("room");
   };
 
   const importM3u = async () => {
@@ -410,7 +426,7 @@ export function WatchPartyApp() {
 
   const searchFromRoom = () => {
     const query = roomSearchInput.trim();
-    const isStreamUrl = /^https?:\/\//i.test(query) && /\.m3u8?(?:$|[?#])/i.test(query);
+    const isStreamUrl = /^https:\/\/[^\s]+\.(?:m3u8|mp4)(?:$|[?#])/i.test(query);
     const isYoutubeUrl = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(query);
     const isYoutubeSearch = Boolean(query) && !isStreamUrl && !isYoutubeUrl;
     if ((isYoutubeSearch && !room?.permissions.includes("search_youtube")) || (!isYoutubeSearch && !room?.permissions.includes("control_source"))) {
@@ -429,6 +445,8 @@ export function WatchPartyApp() {
     } else if (room?.permissions.includes("search_youtube")) {
       setSourceType("youtube");
       setYoutubeQuery(query);
+      void searchYouTube(query, false);
+      return;
     } else {
       Alert.alert("صلاحية البحث", "ليس لديك إذن البحث عن YouTube في هذه الغرفة.");
       return;
@@ -597,7 +615,7 @@ export function WatchPartyApp() {
 
           <View style={styles.sourceTabs}>
             {([
-              ["hls", "رابط M3U8", "link"],
+                ["hls", "رابط MP4 / M3U8", "link"],
               ["m3u", "ملف M3U", "folder-open"],
               ["youtube", "YouTube", "youtube-searched-for"],
             ] as const).map(([type, label, icon]) => (
@@ -617,8 +635,8 @@ export function WatchPartyApp() {
 
           {sourceType === "hls" ? (
             <View style={styles.sourcePanel}>
-              <Field label="رابط HLS / M3U8" keyboardType="url" onChangeText={setSourceUrl} placeholder="https://example.com/stream.m3u8" value={sourceUrl} />
-              <Text style={styles.sourceHelp}>يُشغّل الرابط داخل مشغّل Android الأصلي، وتُنشر حالته فورًا لأعضاء الغرفة.</Text>
+              <Field label="رابط مباشر MP4 أو HLS / M3U8" keyboardType="url" onChangeText={setSourceUrl} placeholder="https://example.com/stream.m3u8" value={sourceUrl} />
+              <Text style={styles.sourceHelp}>رمز الكرة الأرضية يفتح هذه الشاشة لإدخال رابط مباشر ومرخّص فقط. لا يستخرج التطبيق ملفات تشغيل من صفحات المواقع أو المحتوى المحمي.</Text>
             </View>
           ) : null}
 
@@ -667,7 +685,7 @@ export function WatchPartyApp() {
               <Field label="ابحث في YouTube" onChangeText={setYoutubeQuery} placeholder="اكتب عنوانًا أو اسم قناة" value={youtubeQuery} />
               <Text style={styles.sourceHelp}>تظهر 20 نتيجة في كل صفحة. اختر أي فيديو لفتحه عبر YouTube الرسمي.</Text>
               {searchHint ? <Text style={styles.searchHint}>{searchHint}</Text> : null}
-              {youtubeResults.length ? <FlatList data={youtubeResults} keyExtractor={(item) => item.videoId} renderItem={({ item }) => <Pressable accessibilityLabel={`فتح ${item.title}`} onPress={() => void WebBrowser.openBrowserAsync(`https://www.youtube.com/watch?v=${item.videoId}`, { toolbarColor: "#0B1020", controlsColor: "#7C5CFC" })} style={({ pressed }) => [styles.youtubeRow, pressed && styles.pressed]}>{item.thumbnail ? <Image source={{ uri: item.thumbnail }} style={styles.youtubeThumb} /> : <View style={styles.youtubeThumbPlaceholder}><MaterialIcons color={colors.primary} name="play-circle-outline" size={25} /></View>}<View style={styles.youtubeCopy}><Text numberOfLines={2} style={styles.youtubeTitle}>{item.title}</Text><Text numberOfLines={1} style={styles.youtubeChannel}>{item.channelTitle}</Text></View></Pressable>} ListFooterComponent={youtubeNextPage ? <Pressable accessibilityLabel="بحث أكثر في YouTube" onPress={() => void searchYouTube(true)} style={({ pressed }) => [styles.youtubeMore, pressed && styles.pressed]}><Text style={styles.youtubeMoreText}>{youtubeSearching ? "جارٍ البحث…" : "ابحث أكثر"}</Text></Pressable> : null} style={styles.youtubeList} /> : null}
+              {youtubeResults.length ? <FlatList data={youtubeResults} keyExtractor={(item) => item.videoId} renderItem={({ item }) => <Pressable accessibilityLabel={`تشغيل ${item.title}`} onPress={() => chooseYouTubeResult(item)} style={({ pressed }) => [styles.youtubeRow, pressed && styles.pressed]}>{item.thumbnail ? <Image source={{ uri: item.thumbnail }} style={styles.youtubeThumb} /> : <View style={styles.youtubeThumbPlaceholder}><MaterialIcons color={colors.primary} name="play-circle-outline" size={25} /></View>}<View style={styles.youtubeCopy}><Text numberOfLines={2} style={styles.youtubeTitle}>{item.title}</Text><Text numberOfLines={1} style={styles.youtubeChannel}>{item.channelTitle}</Text></View></Pressable>} ListFooterComponent={youtubeNextPage ? <Pressable accessibilityLabel="بحث أكثر في YouTube" onPress={() => void searchYouTube(youtubeQuery, true)} style={({ pressed }) => [styles.youtubeMore, pressed && styles.pressed]}><Text style={styles.youtubeMoreText}>{youtubeSearching ? "جارٍ البحث…" : "ابحث أكثر"}</Text></Pressable> : null} style={styles.youtubeList} /> : null}
             </View>
           ) : null}
 
@@ -703,11 +721,12 @@ export function WatchPartyApp() {
             textAlign="right"
             value={roomSearchInput}
           />
+          <Pressable accessibilityLabel="إضافة رابط MP4 أو M3U8 مباشر" accessibilityRole="button" onPress={() => openRoomSource("hls")} style={({ pressed }) => [styles.roomSearchAction, pressed && styles.pressed]}><MaterialIcons color="#DCE5FF" name="public" size={19} /></Pressable>
           <Pressable accessibilityLabel="إضافة ملف M3U أو M3U8" accessibilityRole="button" onPress={() => void importM3u()} style={({ pressed }) => [styles.roomSearchAction, styles.roomSearchUpload, pressed && styles.pressed]}>
-            <MaterialIcons color="#FFFFFF" name="file-upload" size={25} />
-            <Text style={styles.roomSearchUploadText}>إضافة ملف M3U8</Text>
+            <MaterialIcons color="#FFFFFF" name="file-upload" size={20} />
           </Pressable>
         </View>
+        {roomYoutubeResultsOpen && youtubeResults.length ? <View style={styles.roomYoutubeDropdown}><FlatList data={youtubeResults} keyExtractor={(item) => item.videoId} renderItem={({ item }) => <Pressable accessibilityLabel={`تشغيل ${item.title}`} onPress={() => chooseYouTubeResult(item)} style={({ pressed }) => [styles.youtubeRow, pressed && styles.pressed]}>{item.thumbnail ? <Image source={{ uri: item.thumbnail }} style={styles.youtubeThumb} /> : <View style={styles.youtubeThumbPlaceholder}><MaterialIcons color={colors.primary} name="play-circle-outline" size={25} /></View>}<View style={styles.youtubeCopy}><Text numberOfLines={2} style={styles.youtubeTitle}>{item.title}</Text><Text numberOfLines={1} style={styles.youtubeChannel}>{item.channelTitle}</Text></View></Pressable>} ListFooterComponent={youtubeNextPage ? <Pressable accessibilityLabel="بحث أكثر في YouTube" onPress={() => void searchYouTube(roomSearchInput || youtubeQuery, true)} style={({ pressed }) => [styles.youtubeMore, pressed && styles.pressed]}><Text style={styles.youtubeMoreText}>{youtubeSearching ? "جارٍ البحث…" : "ابحث أكثر"}</Text></Pressable> : null} style={styles.youtubeList} /></View> : null}
 
         <View style={styles.playerWrap}>
           <NativeMediaPlayer canControl={room?.permissions.includes("control_playback") ?? false} onVolumeChange={setVideoVolume} sourceUrl={room?.sourceUrl ?? null} volume={videoVolume} />
@@ -733,15 +752,15 @@ const styles = StyleSheet.create({
   levelControl: { flexDirection: "row-reverse", gap: 7, marginBottom: 4, paddingVertical: 8 },
   levelControlStep: { backgroundColor: "#2D3D60", borderRadius: 4, flex: 1, height: 9 },
   levelControlStepActive: { backgroundColor: "#8B5CF6" },
-  referenceHeader: { alignItems: "center", borderBottomColor: "#222C42", borderBottomWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", minHeight: 76, paddingHorizontal: 10, paddingVertical: 7 },
-  referenceHeaderActions: { flexDirection: "row-reverse", gap: 8 },
-  referenceHeaderButton: { alignItems: "center", backgroundColor: "#121A2B", borderColor: "#283650", borderRadius: 13, borderWidth: 1, height: 48, justifyContent: "center", width: 48 },
+  referenceHeader: { alignItems: "center", borderBottomColor: "#222C42", borderBottomWidth: 1, flexDirection: "row-reverse", justifyContent: "space-between", minHeight: 52, paddingHorizontal: 7, paddingVertical: 3 },
+  referenceHeaderActions: { flexDirection: "row-reverse", gap: 4 },
+  referenceHeaderButton: { alignItems: "center", backgroundColor: "transparent", borderRadius: 9, height: 34, justifyContent: "center", width: 34 },
   referenceLiveDot: { backgroundColor: "#25D878", borderRadius: 5, height: 9, width: 9 },
-  referenceMeta: { alignItems: "center", flexDirection: "row-reverse", gap: 7, marginTop: 4 },
+  referenceMeta: { alignItems: "center", flexDirection: "row-reverse", gap: 5, marginTop: 1 },
   referenceMetaDivider: { backgroundColor: "#31405A", height: 15, width: 1 },
-  referenceMetaText: { color: "#AAB4CB", fontSize: 12, textAlign: "right" },
+  referenceMetaText: { color: "#AAB4CB", fontSize: 10, textAlign: "right" },
   referenceRoomTitle: { alignItems: "center", flex: 1, paddingHorizontal: 8 },
-  referenceTitle: { color: "#FAFAFF", fontSize: 22, fontWeight: "900", textAlign: "center" },
+  referenceTitle: { color: "#FAFAFF", fontSize: 17, fontWeight: "900", textAlign: "center" },
   settingsHeader: { alignItems: "center", borderBottomColor: "#2C3B58", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingBottom: 11 },
   settingsInput: { backgroundColor: "#111A2D", borderColor: "#354767", borderRadius: 13, borderWidth: 1, color: colors.text, fontSize: 13, height: 46, marginBottom: 11, paddingHorizontal: 12 },
   settingsOverlay: { backgroundColor: "rgba(3,6,14,0.58)", bottom: 0, justifyContent: "flex-end", left: 0, position: "absolute", right: 0, top: 0 },
@@ -834,7 +853,7 @@ const styles = StyleSheet.create({
   noteText: { color: "#D7DDF4", flex: 1, fontSize: 13, lineHeight: 19, textAlign: "right" },
   noChannels: { color: colors.muted, fontSize: 13, paddingVertical: 18, textAlign: "center" },
   playOrb: { alignItems: "center", backgroundColor: colors.primary, borderRadius: 30, height: 60, justifyContent: "center", width: 60 },
-  playerWrap: { marginTop: 1, paddingHorizontal: 8 },
+  playerWrap: { marginTop: 1, paddingHorizontal: 0 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.97 }] },
   presenceAvatar: { alignItems: "center", backgroundColor: "#C3A8FF", borderColor: "#E6DEFF", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", width: 25 },
   presenceAvatarSecond: { alignItems: "center", backgroundColor: "#273555", borderColor: "#596E9D", borderRadius: 99, borderWidth: 1, height: 25, justifyContent: "center", marginRight: -8, width: 25 },
@@ -859,14 +878,15 @@ const styles = StyleSheet.create({
   roomMemberChip: { alignItems: "center", backgroundColor: "#0B101F", borderColor: "#26334B", borderRadius: 9, borderWidth: 1, flexDirection: "row-reverse", gap: 2, height: 34, justifyContent: "center", width: 34 },
   roomMemberText: { color: "#F0F3FF", fontSize: 11, fontWeight: "800" },
   roomScreen: { backgroundColor: "#0B1222", flex: 1 },
-  roomSearchAction: { alignItems: "center", borderRadius: 13, height: 54, justifyContent: "center", width: 48 },
-  roomSearchButton: { alignItems: "center", backgroundColor: "#6E43D7", borderRadius: 13, height: 54, justifyContent: "center", shadowColor: "#7B55F1", shadowOpacity: 0.42, shadowRadius: 12, width: 62 },
-  roomSearchInput: { backgroundColor: "#111827", borderColor: "#33425E", borderRadius: 14, borderWidth: 1, color: "#F5F7FF", flex: 1, fontSize: 13, height: 54, minWidth: 76, paddingHorizontal: 12 },
+  roomSearchAction: { alignItems: "center", backgroundColor: "transparent", borderRadius: 10, height: 38, justifyContent: "center", width: 38 },
+  roomSearchButton: { alignItems: "center", backgroundColor: "#6E43D7", borderRadius: 10, height: 38, justifyContent: "center", width: 38 },
+  roomSearchInput: { backgroundColor: "#111827", borderColor: "#33425E", borderRadius: 10, borderWidth: 1, color: "#F5F7FF", flex: 1, fontSize: 13, height: 38, minWidth: 76, paddingHorizontal: 10 },
   roomSearchLink: { backgroundColor: "#311268", borderColor: "#7730B2", borderWidth: 1 },
   roomSearchPlaylist: { backgroundColor: "#112D66", borderColor: "#1F64C8", borderWidth: 1 },
-  roomSearchRow: { alignItems: "center", flexDirection: "row", gap: 7, paddingHorizontal: 8, paddingVertical: 13 },
-  roomSearchUpload: { backgroundColor: "#151C2C", borderColor: "#33405B", borderWidth: 1, flexDirection: "row-reverse", gap: 7, paddingHorizontal: 10, width: 150 },
+  roomSearchRow: { alignItems: "center", flexDirection: "row", gap: 5, paddingHorizontal: 7, paddingVertical: 6 },
+  roomSearchUpload: { backgroundColor: "transparent", width: 38 },
   roomSearchUploadText: { color: "#F3F5FF", fontSize: 12, fontWeight: "800" },
+  roomYoutubeDropdown: { backgroundColor: "#10192B", borderColor: "#3E4C73", borderRadius: 13, borderWidth: 1, left: 7, maxHeight: 310, paddingHorizontal: 10, position: "absolute", right: 7, top: 98, zIndex: 20 },
   roomUserChip: { backgroundColor: "#242B3A", borderColor: "#44506A", borderRadius: 9, borderWidth: 1, maxWidth: 50, paddingHorizontal: 6, paddingVertical: 8 },
   roomUserText: { color: "#F5F7FF", fontSize: 10, fontWeight: "900", textAlign: "center" },
   screenHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 27 },
@@ -889,7 +909,7 @@ const styles = StyleSheet.create({
   syncRow: { alignItems: "center", flexDirection: "row-reverse", gap: 5, marginTop: 4 },
   syncText: { color: colors.success, fontSize: 11, fontWeight: "700" },
   topBrandLine: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
-  videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#080D1A", borderColor: "#202D4B", borderRadius: 19, borderWidth: 1, marginHorizontal: 18, overflow: "hidden", padding: 12 },
+  videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#080D1A", borderRadius: 0, marginHorizontal: 0, overflow: "hidden", padding: 0 },
   videoPlaceholder: { alignItems: "center", flex: 1, justifyContent: "center", paddingHorizontal: 24 },
   videoPlaceholderText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 10, textAlign: "center" },
   videoTopRow: { alignItems: "center", flexDirection: "row-reverse", justifyContent: "space-between" },

@@ -1,5 +1,5 @@
 export type RoomSyncEvent =
-  | { type: "source"; sourceUrl: string; sourceLabel: string; sourceType: "hls" | "m3u"; sentAt: number }
+  | { type: "source"; sourceUrl: string; sourceLabel: string; sourceType: "hls" | "m3u" | "youtube"; sentAt: number }
   | { type: "playback"; playing: boolean; position: number; sentAt: number };
 
 type SyncPublisher = (event: RoomSyncEvent) => Promise<void>;

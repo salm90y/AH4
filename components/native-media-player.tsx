@@ -2,6 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
 import { useEvent } from "expo";
 import { VideoSource, VideoView, useVideoPlayer } from "expo-video";
+import YoutubePlayer from "react-native-youtube-iframe";
 import { useEffect, useRef, useState } from "react";
 import { Alert, AppState, Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -22,10 +23,27 @@ function formatTime(value: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function getYouTubeVideoId(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (host === "youtu.be") return url.pathname.split("/").filter(Boolean)[0] || null;
+    if (host.endsWith("youtube.com")) {
+      const pathParts = url.pathname.split("/").filter(Boolean);
+      const candidate = url.searchParams.get("v") || (pathParts[0] === "shorts" || pathParts[0] === "embed" ? pathParts[1] : null);
+      return candidate && /^[A-Za-z0-9_-]{6,}$/.test(candidate) ? candidate : null;
+    }
+  } catch { /* The selected source is not a URL. */ }
+  return null;
+}
+
 export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChange }: { sourceUrl: string | null; canControl: boolean; volume: number; onVolumeChange: (volume: number) => void }) {
   const viewRef = useRef<VideoView>(null);
   const [readySource, setReadySource] = useState<VideoSource | null>(null);
+  const [youtubeError, setYoutubeError] = useState<string | null>(null);
   const resumeOnForeground = useRef(false);
+  const youtubeVideoId = getYouTubeVideoId(sourceUrl);
   const player = useVideoPlayer(null, (instance) => {
     instance.timeUpdateEventInterval = 1;
     instance.audioMixingMode = "mixWithOthers";
@@ -44,7 +62,7 @@ export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChang
 
   useEffect(() => {
     const configureSource = async () => {
-      if (!sourceUrl) {
+      if (!sourceUrl || youtubeVideoId) {
         player.pause();
         setReadySource(null);
         return;
@@ -62,7 +80,7 @@ export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChang
     configureSource().catch(() => {
       Alert.alert("تعذر تحميل المصدر", "تحقق من أن الرابط متاح ويدعم التشغيل على جهاز Android.");
     });
-  }, [player, sourceUrl]);
+  }, [player, sourceUrl, youtubeVideoId]);
 
   useEffect(() => {
     player.volume = Math.max(0, Math.min(1, volume));
@@ -122,6 +140,32 @@ export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChang
   const duration = player.duration > 0 ? player.duration : 0;
   const position = timeUpdate?.currentTime ?? 0;
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
+
+  if (youtubeVideoId) {
+    return (
+      <View>
+        <View style={styles.videoFrame}>
+          <YoutubePlayer
+            forceAndroidAutoplay
+            height={228}
+            initialPlayerParams={{ controls: true, preventFullScreen: false, rel: false }}
+            onError={(reason: string) => setYoutubeError(reason)}
+            onReady={() => setYoutubeError(null)}
+            play
+            videoId={youtubeVideoId}
+            volume={Math.round(Math.max(0, Math.min(1, volume)) * 100)}
+            width={undefined}
+          />
+        </View>
+        <View style={styles.youtubeControls}>
+          <Control icon="volume-down" label="خفض صوت فيديو YouTube" onPress={() => onVolumeChange(Math.max(0, volume - 0.1))} />
+          <Control icon={volume === 0 ? "volume-off" : "volume-up"} label={volume === 0 ? "إلغاء كتم فيديو YouTube" : "كتم فيديو YouTube"} onPress={() => onVolumeChange(volume === 0 ? 0.8 : 0)} primary />
+          <Control icon="volume-up" label="رفع صوت فيديو YouTube" onPress={() => onVolumeChange(Math.min(1, volume + 0.1))} />
+        </View>
+        {youtubeError ? <Text style={styles.errorText}>تعذر تشغيل الفيديو المضمن ({youtubeError}). قد يمنع مالك الفيديو التضمين.</Text> : null}
+      </View>
+    );
+  }
 
   if (!readySource) {
     return (
@@ -225,4 +269,5 @@ const styles = StyleSheet.create({
   progressTrack: { backgroundColor: colors.border, borderRadius: 5, height: 5, justifyContent: "center" },
   video: { height: "100%", width: "100%" },
   videoFrame: { aspectRatio: 16 / 9, backgroundColor: "#050810", borderColor: "#1B2A42", borderRadius: 18, borderWidth: 1, overflow: "hidden" },
+  youtubeControls: { flexDirection: "row-reverse", gap: 6, paddingTop: 8 },
 });

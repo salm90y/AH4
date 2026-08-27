@@ -31,8 +31,10 @@ const files = [
   "lib/livekit-setup.native.ts",
   "lib/livekit-setup.web.ts",
   "lib/room-api.ts",
+  "lib/room-sync.ts",
   "package.json",
   "pnpm-lock.yaml",
+  "plugins/with-livekit-android-setup.js",
   "scripts/configure-cloudflare-d1.mjs",
   "scripts/publish-cloudflare-deployment.mjs",
   "tests/cloudflare-livekit-token.test.ts",
@@ -78,11 +80,9 @@ try {
     });
     tree.push({ path, mode: "100644", type: "blob", sha: blob.sha });
   }
-  tree.push({ path: "components/room-realtime-panel.tsx", mode: "100644", type: "blob", sha: null });
-
   const createdTree = api("POST", `repos/${repo}/git/trees`, { base_tree: headCommit.tree.sha, tree });
   const commit = api("POST", `repos/${repo}/git/commits`, {
-    message: "feat(room-ui): match AH4 room layout to reference design",
+    message: "fix(android): embed YouTube and initialize LiveKit native runtime",
     tree: createdTree.sha,
     parents: [headSha],
   });

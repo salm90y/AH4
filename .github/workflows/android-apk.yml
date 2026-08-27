@@ -24,6 +24,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "app.config.ts"
+      - "plugins/**"
       - "babel.config.js"
       - "metro.config.js"
 
