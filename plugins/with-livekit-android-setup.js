@@ -14,7 +14,7 @@ module.exports = function withLiveKitAndroidSetup(config) {
     if (!source.includes("LiveKitReactNative.setup(this")) {
       source = source.replace(
         "  override fun onCreate() {\n    super.onCreate()",
-        "  override fun onCreate() {\n    super.onCreate()\n    LiveKitReactNative.setup(this, AudioType.CommunicationAudioType())",
+        "  override fun onCreate() {\n    LiveKitReactNative.setup(this, AudioType.CommunicationAudioType())\n    super.onCreate()",
       );
     }
     nextConfig.modResults.contents = source;

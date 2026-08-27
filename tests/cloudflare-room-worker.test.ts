@@ -160,5 +160,11 @@ describe("Cloudflare room Worker", () => {
 
     const state = await (await worker.fetch(new Request(`https://api.ahmed1986y.com/v1/rooms/${created.code}/state`, { headers: { Authorization: `Bearer ${joined.accessToken}` } }), environment)).json() as { source: typeof source };
     expect(state.source).toEqual(source);
+
+    const playback = { playing: true, position: 42.5, sentAt: 1_700_000_000_000 };
+    const savedPlayback = await worker.fetch(new Request("https://api.ahmed1986y.com/v1/rooms/playback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomCode: created.code, accessToken: created.accessToken, playback }) }), environment);
+    expect(savedPlayback.status).toBe(200);
+    const refreshed = await (await worker.fetch(new Request(`https://api.ahmed1986y.com/v1/rooms/${created.code}/state`, { headers: { Authorization: `Bearer ${joined.accessToken}` } }), environment)).json() as { playback: typeof playback };
+    expect(refreshed.playback).toEqual(playback);
   });
 });

@@ -1,8 +1,9 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { updateRoomPlayback } from "@/lib/room-api";
 import { publishRoomSync, subscribeRoomSync } from "@/lib/room-sync";
 import { useEvent } from "expo";
 import { VideoSource, VideoView, useVideoPlayer } from "expo-video";
-import YoutubePlayer from "react-native-youtube-iframe";
+import YoutubePlayer, { PLAYER_STATES, type YoutubeIframeRef } from "react-native-youtube-iframe";
 import { useEffect, useRef, useState } from "react";
 import { Alert, AppState, Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -38,11 +39,14 @@ function getYouTubeVideoId(value: string | null) {
   return null;
 }
 
-export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChange }: { sourceUrl: string | null; canControl: boolean; volume: number; onVolumeChange: (volume: number) => void }) {
+export function NativeMediaPlayer({ sourceUrl, canControl, roomAccessToken, roomCode, volume, onVolumeChange }: { sourceUrl: string | null; canControl: boolean; roomAccessToken: string; roomCode: string; volume: number; onVolumeChange: (volume: number) => void }) {
   const viewRef = useRef<VideoView>(null);
+  const youtubeRef = useRef<YoutubeIframeRef>(null);
   const [readySource, setReadySource] = useState<VideoSource | null>(null);
   const [youtubeError, setYoutubeError] = useState<string | null>(null);
+  const [youtubePlaying, setYoutubePlaying] = useState(true);
   const resumeOnForeground = useRef(false);
+  const applyingRemoteYoutubeState = useRef(false);
   const youtubeVideoId = getYouTubeVideoId(sourceUrl);
   const player = useVideoPlayer(null, (instance) => {
     instance.timeUpdateEventInterval = 1;
@@ -101,24 +105,57 @@ export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChang
 
   useEffect(() => {
     return subscribeRoomSync((event) => {
-      if (event.type !== "playback" || !readySource) return;
+      if (event.type !== "playback") return;
+      if (youtubeVideoId) {
+        applyingRemoteYoutubeState.current = true;
+        const expectedPosition = Math.max(0, event.position + (event.playing ? (Date.now() - event.sentAt) / 1000 : 0));
+        const youtubePlayer = youtubeRef.current;
+        if (!youtubePlayer) {
+          applyingRemoteYoutubeState.current = false;
+          return;
+        }
+        void youtubePlayer.getCurrentTime().then((currentTime) => {
+          if (Math.abs(currentTime - expectedPosition) > 1) youtubeRef.current?.seekTo(expectedPosition, true);
+          setYoutubePlaying(event.playing);
+          setTimeout(() => { applyingRemoteYoutubeState.current = false; }, 250);
+        }).catch(() => { applyingRemoteYoutubeState.current = false; });
+        return;
+      }
+      if (!readySource) return;
       const drift = Math.abs(player.currentTime - event.position);
       if (drift > 1.5) player.currentTime = event.position;
       if (event.playing && !player.playing) player.play();
       if (!event.playing && player.playing) player.pause();
     });
-  }, [player, readySource]);
+  }, [player, readySource, youtubeVideoId]);
 
   useEffect(() => {
     if (!readySource || !isPlaying) return;
     const interval = setInterval(() => {
-      void publishRoomSync({ type: "playback", playing: true, position: player.currentTime, sentAt: Date.now() });
+      syncPlayback(true, player.currentTime);
     }, 5000);
     return () => clearInterval(interval);
   }, [isPlaying, player, readySource]);
 
   const syncPlayback = (playing: boolean, nextPosition = player.currentTime) => {
-    void publishRoomSync({ type: "playback", playing, position: nextPosition, sentAt: Date.now() });
+    const playback = { playing, position: Math.max(0, nextPosition), sentAt: Date.now() };
+    void publishRoomSync({ type: "playback", ...playback });
+    if (canControl && roomCode && roomAccessToken) void updateRoomPlayback({ roomCode, accessToken: roomAccessToken, playback }).catch(() => undefined);
+  };
+
+  useEffect(() => {
+    if (!youtubeVideoId || !youtubePlaying || !canControl) return;
+    const interval = setInterval(() => {
+      void youtubeRef.current?.getCurrentTime().then((currentTime) => syncPlayback(true, currentTime)).catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [canControl, roomAccessToken, roomCode, youtubePlaying, youtubeVideoId]);
+
+  const handleYouTubeState = (state: PLAYER_STATES) => {
+    const playing = state === PLAYER_STATES.PLAYING;
+    setYoutubePlaying(playing);
+    if (!canControl || applyingRemoteYoutubeState.current || (state !== PLAYER_STATES.PLAYING && state !== PLAYER_STATES.PAUSED && state !== PLAYER_STATES.ENDED)) return;
+    void youtubeRef.current?.getCurrentTime().then((currentTime) => syncPlayback(playing, currentTime)).catch(() => undefined);
   };
 
   const seekBy = (seconds: number) => {
@@ -149,9 +186,11 @@ export function NativeMediaPlayer({ sourceUrl, canControl, volume, onVolumeChang
             forceAndroidAutoplay
             height={228}
             initialPlayerParams={{ controls: true, preventFullScreen: false, rel: false }}
+            onChangeState={handleYouTubeState}
             onError={(reason: string) => setYoutubeError(reason)}
             onReady={() => setYoutubeError(null)}
-            play
+            play={youtubePlaying}
+            ref={youtubeRef}
             videoId={youtubeVideoId}
             volume={Math.round(Math.max(0, Math.min(1, volume)) * 100)}
             width={undefined}

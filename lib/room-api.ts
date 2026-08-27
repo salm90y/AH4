@@ -18,6 +18,7 @@ export type RoomMember = {
 export type RoomChatMessage = { id: string; authorId: string; authorName: string; text: string; createdAt: string };
 export type YouTubeSearchResult = { channelTitle: string; thumbnail: string; title: string; videoId: string };
 export type RoomSource = { sourceType: "hls" | "m3u" | "youtube"; sourceUrl: string; sourceLabel: string };
+export type RoomPlayback = { playing: boolean; position: number; sentAt: number };
 
 export type CloudRoomResponse = {
   code: string;
@@ -28,6 +29,7 @@ export type CloudRoomResponse = {
   role: RoomRole;
   permissions: RoomPermission[];
   source: RoomSource | null;
+  playback: RoomPlayback | null;
   accessToken: string;
   serverUrl: string;
   token: string;
@@ -43,6 +45,7 @@ export type RoomStateResponse = {
   messages: RoomChatMessage[];
   visibility: RoomVisibility;
   source: RoomSource | null;
+  playback: RoomPlayback | null;
 };
 
 type CreateRoomInput = { name: string; password: string; participantId: string; displayName: string; visibility: RoomVisibility };
@@ -78,4 +81,5 @@ export function updateRoomMemberPermissions(input: { roomCode: string; accessTok
 export function performRoomMemberAction(input: { roomCode: string; accessToken: string; targetParticipantId: string; action: RoomMemberAction }) { return requestJson<{ member: RoomMember; action: RoomMemberAction }>("/v1/rooms/members/action", input); }
 export function updateCloudRoomSettings(input: { roomCode: string; accessToken: string; visibility: RoomVisibility; password?: string }) { return requestJson<{ visibility: RoomVisibility; passwordProtected: boolean }>("/v1/rooms/settings", input); }
 export function updateRoomSource(input: { roomCode: string; accessToken: string; source: RoomSource }) { return requestJson<{ source: RoomSource }>("/v1/rooms/source", input); }
+export function updateRoomPlayback(input: { roomCode: string; accessToken: string; playback: RoomPlayback }) { return requestJson<{ playback: RoomPlayback }>("/v1/rooms/playback", input); }
 export function searchRoomYouTube(input: { roomCode: string; accessToken: string; query: string; pageToken?: string | null }) { return requestJson<{ items: YouTubeSearchResult[]; nextPageToken: string | null }>("/v1/rooms/youtube/search", input); }
